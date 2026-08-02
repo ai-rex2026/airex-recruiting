@@ -54,7 +54,7 @@ export default async function ExceptionsPage() {
             {rows.length === 0 ? (
               <Empty>該当なし。</Empty>
             ) : (
-              <table className="grid w-full text-sm">
+              <table className="tbl w-full text-sm">
                 <tbody>
                   {rows.map((a) => {
                     const t = a.target as unknown as {

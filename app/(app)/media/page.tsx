@@ -26,7 +26,7 @@ export default async function MediaPage({
       <header>
         <h1 className="text-xl font-bold text-[#1B2A4A]">メディア台帳</h1>
         <p className="mt-1 text-xs text-slate-500">
-          案件をまたいで共有される、このアプリで最も価値の高いデータ。接触履歴・返信率・営業お断りがここに貯まります。
+          案件をまたいで共有される、このアプリで最も価値の高いデータ。接触履歴・返信率・営業お断りがここに溜まります。
         </p>
       </header>
 
@@ -38,7 +38,7 @@ export default async function MediaPage({
             placeholder="ドメイン・メディア名で検索"
             className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
           />
-          <button className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm">検索</button>
+          <button className="whitespace-nowrap rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm">検索</button>
         </form>
       </Card>
 
@@ -47,7 +47,7 @@ export default async function MediaPage({
           <Empty>まだメディアがありません。収集を実行すると自動で登録されます。</Empty>
         ) : (
           <div className="overflow-x-auto">
-            <table className="grid w-full text-sm">
+            <table className="tbl w-full text-sm">
               <thead>
                 <tr className="text-left text-[11px] text-slate-500">
                   <th className="pb-2">メディア</th>

@@ -129,7 +129,7 @@ export default async function Dashboard() {
               まだ案件がありません。<Link href="/campaigns" className="underline">案件を登録</Link>してください。
             </Empty>
           ) : (
-            <table className="grid w-full text-sm">
+            <table className="tbl w-full text-sm">
               <thead>
                 <tr className="text-left text-[11px] text-slate-500">
                   <th className="pb-2">案件</th>

@@ -66,7 +66,7 @@ export default async function TemplatesPage() {
             </div>
             <div>
               <label className={labelCls}>本文</label>
-              <textarea name="body" defaultValue={t.body} rows={10} className={`${inputCls} font-mono text-xs`} />
+              <textarea name="body" defaultValue={t.body} rows={14} className={`${inputCls} font-mono text-xs`} />
             </div>
             <div className="flex gap-2">
               <button className={btnAccent}>保存</button>

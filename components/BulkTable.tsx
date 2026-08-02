@@ -89,7 +89,7 @@ export default function BulkTable({
       </div>
 
       <div className="overflow-x-auto">
-        <table className="grid w-full text-sm">
+        <table className="tbl w-full text-sm">
           <thead>
             <tr className="text-left text-[11px] text-slate-500">
               <th className="w-8 pb-2">

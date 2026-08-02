@@ -66,7 +66,7 @@ POST /api/worker/report    Body: {"attempt_id":"...","result":"success|uncertain
         {queued.length === 0 ? (
           <Empty>送信待ちはありません。</Empty>
         ) : (
-          <table className="grid w-full text-sm">
+          <table className="tbl w-full text-sm">
             <thead>
               <tr className="text-left text-[11px] text-slate-500">
                 <th className="pb-2">メディア</th>
@@ -121,7 +121,7 @@ POST /api/worker/report    Body: {"attempt_id":"...","result":"success|uncertain
         {done.length === 0 ? (
           <Empty>まだ送信実績がありません。</Empty>
         ) : (
-          <table className="grid w-full text-sm">
+          <table className="tbl w-full text-sm">
             <thead>
               <tr className="text-left text-[11px] text-slate-500">
                 <th className="pb-2">メディア</th>

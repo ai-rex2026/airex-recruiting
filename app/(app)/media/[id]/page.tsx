@@ -147,7 +147,7 @@ export default async function MediaDetail({ params }: { params: Promise<{ id: st
         {(targets ?? []).length === 0 ? (
           <Empty>まだ打診がありません。</Empty>
         ) : (
-          <table className="grid w-full text-sm">
+          <table className="tbl w-full text-sm">
             <thead>
               <tr className="text-left text-[11px] text-slate-500">
                 <th className="pb-2">案件</th>

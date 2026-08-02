@@ -93,7 +93,7 @@ export default async function CollectPage({
         {(recent ?? []).length === 0 ? (
           <Empty>まだ収集履歴がありません。</Empty>
         ) : (
-          <table className="grid w-full text-sm">
+          <table className="tbl w-full text-sm">
             <thead>
               <tr className="text-left text-[11px] text-slate-500">
                 <th className="pb-2">キーワード</th>

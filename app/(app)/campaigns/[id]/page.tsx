@@ -116,7 +116,7 @@ export default async function CampaignDetail({
         {(kws ?? []).length === 0 ? (
           <Empty>キーワードが未登録です。</Empty>
         ) : (
-          <table className="grid w-full text-sm">
+          <table className="tbl w-full text-sm">
             <thead>
               <tr className="text-left text-[11px] text-slate-500">
                 <th className="pb-2">キーワード</th>

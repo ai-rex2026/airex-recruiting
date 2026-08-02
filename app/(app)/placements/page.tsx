@@ -82,7 +82,7 @@ export default async function PlacementsPage() {
         {(placements ?? []).length === 0 ? (
           <Empty>まだ掲載がありません。</Empty>
         ) : (
-          <table className="grid w-full text-sm">
+          <table className="tbl w-full text-sm">
             <thead>
               <tr className="text-left text-[11px] text-slate-500">
                 <th className="pb-2">メディア</th>

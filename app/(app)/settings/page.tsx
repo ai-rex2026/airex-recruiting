@@ -91,7 +91,7 @@ export default async function SettingsPage() {
       </Card>
 
       <Card title="メンバー" desc="ロールの変更は現在 Supabase 側で行います">
-        <table className="grid w-full text-sm">
+        <table className="tbl w-full text-sm">
           <thead>
             <tr className="text-left text-[11px] text-slate-500">
               <th className="pb-2">氏名</th>

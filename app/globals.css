@@ -12,9 +12,15 @@ body {
     "Noto Sans JP", Meiryo, system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
-table.grid th,
-table.grid td {
+table.tbl th,
+table.tbl td {
   border-bottom: 1px solid #e2e8f0;
+  padding-right: 20px;
+  vertical-align: top;
+}
+table.tbl th:last-child,
+table.tbl td:last-child {
+  padding-right: 0;
 }
 
 @media print {

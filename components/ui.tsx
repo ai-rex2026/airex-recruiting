@@ -73,14 +73,15 @@ export function Empty({ children }: { children: ReactNode }) {
   );
 }
 
+export const nowrap = "whitespace-nowrap";
 export const inputCls =
   "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-[#1B2A4A] focus:ring-1 focus:ring-[#1B2A4A]";
 export const btnPrimary =
-  "inline-flex items-center justify-center rounded-lg bg-[#1B2A4A] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#25375f] disabled:opacity-50";
+  "inline-flex items-center justify-center whitespace-nowrap rounded-lg bg-[#1B2A4A] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#25375f] disabled:opacity-50";
 export const btnAccent =
-  "inline-flex items-center justify-center rounded-lg bg-[#C1553B] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#a9482f] disabled:opacity-50";
+  "inline-flex items-center justify-center whitespace-nowrap rounded-lg bg-[#C1553B] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#a9482f] disabled:opacity-50";
 export const btnGhost =
-  "inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50";
+  "inline-flex items-center justify-center whitespace-nowrap rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50";
 export const btnSmall =
-  "inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-50";
+  "inline-flex items-center justify-center whitespace-nowrap rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-50";
 export const labelCls = "block text-xs font-semibold text-slate-600 mb-1";
