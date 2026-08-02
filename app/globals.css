@@ -1,0 +1,23 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f8fafc;
+  --foreground: #0f172a;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Yu Gothic",
+    "Noto Sans JP", Meiryo, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+table.grid th,
+table.grid td {
+  border-bottom: 1px solid #e2e8f0;
+}
+
+@media print {
+  .no-print { display: none !important; }
+  body { background: #fff; }
+}
