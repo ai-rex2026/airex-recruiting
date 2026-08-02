@@ -2,6 +2,9 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSessionProfile } from "@/lib/supabase/server";
 import { signOut } from "@/app/actions";
+import TopProgress from "@/components/TopProgress";
+import SubmitButton from "@/components/SubmitButton";
+import { Suspense } from "react";
 
 export const dynamic = "force-dynamic";
 
@@ -42,6 +45,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="flex min-h-screen">
+      <Suspense fallback={null}>
+        <TopProgress />
+      </Suspense>
       <aside className="no-print w-56 shrink-0 border-r border-slate-200 bg-white">
         <div className="border-b border-slate-100 px-4 py-4">
           <p className="text-[10px] font-bold tracking-wider text-[#C1553B]">AI-REX RECRUITING</p>
@@ -67,9 +73,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <p className="text-xs font-medium text-slate-700">{profile.full_name || user.email}</p>
           <p className="text-[11px] text-slate-400">{profile.role}</p>
           <form action={signOut}>
-            <button className="mt-2 text-[11px] text-slate-500 underline hover:text-slate-800">
+            <SubmitButton variant="small" className="mt-2 !border-0 !bg-transparent !px-0 !text-[11px] !text-slate-500 underline" pendingLabel="…">
               ログアウト
-            </button>
+            </SubmitButton>
           </form>
         </div>
       </aside>

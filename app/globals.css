@@ -27,3 +27,9 @@ table.tbl td:last-child {
   .no-print { display: none !important; }
   body { background: #fff; }
 }
+
+@keyframes nprogress {
+  0%   { transform: translateX(-100%); }
+  50%  { transform: translateX(120%); }
+  100% { transform: translateX(260%); }
+}

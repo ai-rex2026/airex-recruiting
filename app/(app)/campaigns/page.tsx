@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { getSessionProfile } from "@/lib/supabase/server";
 import { createCampaign, duplicateCampaign } from "@/app/actions";
-import { Card, Empty, btnAccent, btnSmall, inputCls, labelCls } from "@/components/ui";
+import { Card, Empty, inputCls, labelCls } from "@/components/ui";
+import SubmitButton from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
 
@@ -53,7 +54,7 @@ export default async function CampaignsPage() {
                   <td className="py-2 text-right">
                     <form action={duplicateCampaign} className="inline">
                       <input type="hidden" name="id" value={c.id} />
-                      <button className={btnSmall}>複製</button>
+                      <SubmitButton variant="small">複製</SubmitButton>
                     </form>
                   </td>
                 </tr>
@@ -107,7 +108,7 @@ export default async function CampaignsPage() {
             />
           </div>
           <div className="md:col-span-2">
-            <button className={btnAccent}>案件を登録</button>
+            <SubmitButton variant="accent" pendingLabel="登録中…">案件を登録</SubmitButton>
           </div>
         </form>
       </Card>

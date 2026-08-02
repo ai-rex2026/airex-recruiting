@@ -2,7 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getSessionProfile } from "@/lib/supabase/server";
 import { addKeywords, deleteKeyword, suggestKeywords } from "@/app/actions";
-import { Card, Empty, btnAccent, btnGhost, btnSmall, inputCls, labelCls } from "@/components/ui";
+import { Card, Empty, btnAccent, btnGhost, btnSmall, inputCls } from "@/components/ui";
+import SubmitButton from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
 
@@ -103,11 +104,11 @@ export default async function CampaignDetail({
               className={inputCls}
               placeholder={"改行または読点で区切って入力"}
             />
-            <button className={btnAccent}>追加</button>
+            <SubmitButton variant="accent">追加</SubmitButton>
           </form>
           <form action={suggestKeywords} className="mt-3">
             <input type="hidden" name="campaign_id" value={id} />
-            <button className={btnGhost}>AIにKWを提案させる</button>
+            <SubmitButton variant="ghost" pendingLabel="AIが考えています…">AIにKWを提案させる</SubmitButton>
           </form>
         </Card>
       </div>
@@ -146,7 +147,7 @@ export default async function CampaignDetail({
                       <form action={deleteKeyword} className="inline">
                         <input type="hidden" name="id" value={k.id} />
                         <input type="hidden" name="campaign_id" value={id} />
-                        <button className={btnSmall}>削除</button>
+                        <SubmitButton variant="small">削除</SubmitButton>
                       </form>
                     </td>
                   </tr>

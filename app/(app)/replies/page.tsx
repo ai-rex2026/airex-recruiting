@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { getSessionProfile } from "@/lib/supabase/server";
 import { saveNegotiationNote, setTargetStatus } from "@/app/actions";
-import { Card, Empty, Badge, btnSmall, btnGhost, inputCls } from "@/components/ui";
+import { Card, Empty, Badge, btnSmall, inputCls } from "@/components/ui";
 import { OUTREACH_STATUS, REPLY_CLASS, statusTone } from "@/lib/domain";
+import SubmitButton from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
 
@@ -21,6 +22,7 @@ export default async function RepliesPage() {
   const silent = rows.filter((t) => ["sent", "uncertain"].includes(t.status));
 
   // 返答なし候補：送信から14日以上経過
+  // eslint-disable-next-line react-hooks/purity -- Server Component。描画のたびに現在時刻で判定してよい
   const now = Date.now();
   const stale = silent.filter(
     (t) => now - new Date(t.updated_at).getTime() > 14 * 24 * 3600 * 1000
@@ -74,16 +76,16 @@ export default async function RepliesPage() {
                       placeholder="交渉メモ（単価・承認率・掲載位置の経過）"
                       className={`${inputCls} py-1 text-xs`}
                     />
-                    <button className={btnSmall}>保存</button>
+                    <SubmitButton variant="small">保存</SubmitButton>
                   </form>
                   <div className="mt-2 flex gap-2">
                     {(["placeable", "rejected"] as const).map((s) => (
                       <form action={setTargetStatus} key={s}>
                         <input type="hidden" name="ids" value={t.id} />
                         <input type="hidden" name="status" value={s} />
-                        <button className={btnGhost}>
+                        <SubmitButton variant="ghost">
                           {s === "placeable" ? "掲載可能にする" : "掲載不可にする"}
-                        </button>
+                        </SubmitButton>
                       </form>
                     ))}
                     {t.status === "placeable" && (
@@ -130,7 +132,7 @@ export default async function RepliesPage() {
                   <form action={setTargetStatus} className="ml-auto">
                     <input type="hidden" name="ids" value={t.id} />
                     <input type="hidden" name="status" value="no_reply" />
-                    <button className={btnSmall}>返答なしにする</button>
+                    <SubmitButton variant="small">返答なしにする</SubmitButton>
                   </form>
                 </li>
               );

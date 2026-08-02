@@ -2,8 +2,9 @@ import Link from "next/link";
 import { getSessionProfile } from "@/lib/supabase/server";
 import { approveAndQueue, saveDraft, setTargetStatus, confirmReply, addReply } from "@/app/actions";
 import ApproveCard, { type QueueItem } from "@/components/ApproveCard";
-import { Card, Empty, Badge, btnAccent, btnGhost, inputCls } from "@/components/ui";
+import { Card, Empty, Badge, btnGhost, inputCls } from "@/components/ui";
 import { REPLY_CLASS } from "@/lib/domain";
+import SubmitButton from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
 
@@ -145,7 +146,7 @@ export default async function QueuePage({
                   <label className="mb-1 block text-[11px] text-slate-500">送信予約（任意）</label>
                   <input type="datetime-local" name="scheduled_for" className={inputCls} />
                 </div>
-                <button className={btnAccent}>表示中の {items.length} 件を承認</button>
+                <SubmitButton variant="accent" pendingLabel="承認中…">表示中の {items.length} 件を承認</SubmitButton>
                 <p className="text-[11px] text-slate-400">
                   営業お断り・送信済／不確定のメディアは自動でスキップされます（二重送信防止）。
                 </p>
@@ -182,7 +183,7 @@ export default async function QueuePage({
                 })}
               </select>
               <textarea name="body" rows={5} className={inputCls} placeholder="返信本文を貼り付け" required />
-              <button className={btnAccent}>取り込んでAIに分類させる</button>
+              <SubmitButton variant="accent" pendingLabel="AIが分類中…">取り込んでAIに分類させる</SubmitButton>
             </form>
           </Card>
 
@@ -235,7 +236,7 @@ export default async function QueuePage({
                             </option>
                           ))}
                         </select>
-                        <button className={btnAccent}>この分類で確定</button>
+                        <SubmitButton variant="accent">この分類で確定</SubmitButton>
                       </form>
                       <Link href={`/media/${t.media_id}`} className={`${btnGhost} w-full`}>
                         メディア台帳を見る

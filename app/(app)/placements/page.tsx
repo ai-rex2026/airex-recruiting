@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { getSessionProfile } from "@/lib/supabase/server";
 import { createPlacement, markReported } from "@/app/actions";
-import { Card, Empty, Badge, btnAccent, btnGhost, inputCls, labelCls } from "@/components/ui";
+import { Card, Empty, Badge, btnGhost, inputCls, labelCls } from "@/components/ui";
+import SubmitButton from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
 
@@ -72,7 +73,7 @@ export default async function PlacementsPage() {
               <input name="evidence_path" className={inputCls} />
             </div>
             <div className="md:col-span-3">
-              <button className={btnAccent}>掲載を登録</button>
+              <SubmitButton variant="accent">掲載を登録</SubmitButton>
             </div>
           </form>
         )}
@@ -152,7 +153,7 @@ export default async function PlacementsPage() {
               </Link>
               <form action={markReported}>
                 <input type="hidden" name="campaign_id" value={c.id} />
-                <button className={btnGhost}>報告済みにする</button>
+                <SubmitButton variant="ghost">報告済みにする</SubmitButton>
               </form>
             </div>
           ))}

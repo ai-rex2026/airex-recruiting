@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Badge, btnAccent, btnGhost, btnSmall } from "@/components/ui";
+import { Badge } from "@/components/ui";
+import SubmitButton from "@/components/SubmitButton";
 import { OUTREACH_STATUS, statusTone } from "@/lib/domain";
 
 export type Row = {
@@ -55,34 +56,20 @@ export default function BulkTable({
 
       <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 px-3 py-2">
         <span className="text-xs text-slate-600">選択 {sel.size} 件</span>
-        <button
-          type="submit"
-          formAction={setStatus}
-          name="status"
-          value="confirmed"
-          disabled={!sel.size}
-          className={btnGhost}
-        >
+        <SubmitButton variant="ghost" formAction={setStatus} name="status" value="confirmed" disabled={!sel.size}>
           対象確定
-        </button>
-        <button
-          type="submit"
+        </SubmitButton>
+        <SubmitButton
+          variant="accent"
           formAction={generateDrafts}
           disabled={!sel.size}
-          className={btnAccent}
+          pendingLabel="AIが文面を生成中…（数十秒かかります）"
         >
           AIで文面を生成 → 承認キューへ
-        </button>
-        <button
-          type="submit"
-          formAction={setStatus}
-          name="status"
-          value="excluded"
-          disabled={!sel.size}
-          className={btnGhost}
-        >
+        </SubmitButton>
+        <SubmitButton variant="ghost" formAction={setStatus} name="status" value="excluded" disabled={!sel.size}>
           対象外にする
-        </button>
+        </SubmitButton>
         <span className="ml-auto text-[11px] text-slate-400">
           営業お断りのメディアは自動で除外されます
         </span>

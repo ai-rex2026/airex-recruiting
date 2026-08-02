@@ -1,6 +1,7 @@
 import { getSessionProfile } from "@/lib/supabase/server";
 import { saveTemplate, deleteTemplate } from "@/app/actions";
-import { Card, Empty, btnAccent, btnSmall, inputCls, labelCls } from "@/components/ui";
+import { Card, Empty, inputCls, labelCls } from "@/components/ui";
+import SubmitButton from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
 
@@ -69,12 +70,12 @@ export default async function TemplatesPage() {
               <textarea name="body" defaultValue={t.body} rows={14} className={`${inputCls} font-mono text-xs`} />
             </div>
             <div className="flex gap-2">
-              <button className={btnAccent}>保存</button>
+              <SubmitButton variant="accent">保存</SubmitButton>
             </div>
           </form>
           <form action={deleteTemplate} className="mt-2">
             <input type="hidden" name="id" value={t.id} />
-            <button className={btnSmall}>このテンプレートを削除</button>
+            <SubmitButton variant="small">このテンプレートを削除</SubmitButton>
           </form>
         </Card>
       ))}
@@ -108,7 +109,7 @@ export default async function TemplatesPage() {
             <label className={labelCls}>本文</label>
             <textarea name="body" rows={8} required className={`${inputCls} font-mono text-xs`} />
           </div>
-          <button className={btnAccent}>追加</button>
+          <SubmitButton variant="accent">追加</SubmitButton>
         </form>
       </Card>
     </div>

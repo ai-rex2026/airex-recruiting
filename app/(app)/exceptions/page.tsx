@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { getSessionProfile } from "@/lib/supabase/server";
 import { recordSendResult, addContact, suggestContactFix, setTargetStatus } from "@/app/actions";
-import { Card, Empty, Badge, btnSmall, btnGhost, inputCls } from "@/components/ui";
+import { Card, Empty, Badge, inputCls } from "@/components/ui";
 import { SEND_RESULT } from "@/lib/domain";
+import SubmitButton from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
 
@@ -83,11 +84,11 @@ export default async function ExceptionsPage() {
                                   placeholder="正しい問い合わせURL"
                                   className={`${inputCls} w-64 py-1 text-xs`}
                                 />
-                                <button className={btnSmall}>台帳に反映</button>
+                                <SubmitButton variant="small">台帳に反映</SubmitButton>
                               </form>
                               <form action={suggestContactFix}>
                                 <input type="hidden" name="media_id" value={t?.media?.id ?? ""} />
-                                <button className={btnSmall}>AIに候補を出させる</button>
+                                <SubmitButton variant="small" pendingLabel="AIが候補を作成中…">AIに候補を出させる</SubmitButton>
                               </form>
                             </div>
                           )}
@@ -105,7 +106,7 @@ export default async function ExceptionsPage() {
                                 ))}
                             </select>
                             <input name="detail" placeholder="備考" className={`${inputCls} w-24 py-1 text-xs`} />
-                            <button className={btnSmall}>確定</button>
+                            <SubmitButton variant="small">確定</SubmitButton>
                           </form>
                         </td>
                       </tr>
@@ -139,13 +140,13 @@ export default async function ExceptionsPage() {
                       <option value="dm">DM</option>
                     </select>
                     <input name="value" placeholder="URL / アドレス" className={`${inputCls} w-56 py-1 text-xs`} />
-                    <button className={btnSmall}>登録</button>
+                    <SubmitButton variant="small">登録</SubmitButton>
                   </form>
                   <form action={setTargetStatus}>
                     <input type="hidden" name="ids" value={t.id} />
                     <input type="hidden" name="status" value="excluded" />
                     <input type="hidden" name="reason" value="宛先が特定できない" />
-                    <button className={btnGhost}>除外</button>
+                    <SubmitButton variant="ghost">除外</SubmitButton>
                   </form>
                 </li>
               );

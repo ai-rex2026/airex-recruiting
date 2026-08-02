@@ -1,6 +1,7 @@
 import { getSessionProfile } from "@/lib/supabase/server";
 import { ingestCollection } from "@/app/actions";
-import { Card, Empty, btnAccent, inputCls, labelCls } from "@/components/ui";
+import { Card, Empty, inputCls, labelCls } from "@/components/ui";
+import SubmitButton from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
 
@@ -80,7 +81,7 @@ export default async function CollectPage({
               />
             </div>
             <div className="flex items-center gap-3">
-              <button className={btnAccent}>AIで解析して陣取り表に反映</button>
+              <SubmitButton variant="accent" pendingLabel="AIが解析中…（数十秒かかります）">AIで解析して陣取り表に反映</SubmitButton>
               <span className="text-[11px] text-slate-400">
                 解析には数十秒かかることがあります。
               </span>

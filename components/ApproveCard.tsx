@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Badge, btnAccent, btnGhost, btnSmall, inputCls } from "@/components/ui";
+import { Badge, btnGhost, btnSmall, inputCls } from "@/components/ui";
+import SubmitButton from "@/components/SubmitButton";
 
 type Act = (formData: FormData) => void | Promise<void>;
 
@@ -120,7 +121,7 @@ export default function ApproveCard({
                 className={`${inputCls} font-mono text-xs leading-relaxed`}
               />
               <div className="flex gap-2">
-                <button className={btnAccent}>修正を保存</button>
+                <SubmitButton variant="accent">修正を保存</SubmitButton>
                 <button type="button" onClick={() => setEditing(false)} className={btnGhost}>
                   取消
                 </button>
@@ -135,7 +136,7 @@ export default function ApproveCard({
               <div className="mt-3 flex flex-wrap gap-2">
                 <form action={approve} className="inline">
                   <input type="hidden" name="ids" value={item.id} />
-                  <button className={btnAccent}>承認して送信キューへ</button>
+                  <SubmitButton variant="accent">承認して送信キューへ</SubmitButton>
                 </form>
                 <button type="button" onClick={() => setEditing(true)} className={btnGhost}>
                   編集して承認
@@ -149,7 +150,7 @@ export default function ApproveCard({
                     <option>重複・名寄せ漏れ</option>
                     <option>営業お断りの記載あり</option>
                   </select>
-                  <button className={btnGhost}>除外</button>
+                  <SubmitButton variant="ghost">除外</SubmitButton>
                 </form>
               </div>
             </>

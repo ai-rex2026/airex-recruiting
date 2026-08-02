@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { getSessionProfile } from "@/lib/supabase/server";
 import { recordSendResult } from "@/app/actions";
-import { Card, Empty, Badge, btnSmall, inputCls } from "@/components/ui";
+import { Card, Empty, Badge, inputCls } from "@/components/ui";
 import { SEND_RESULT } from "@/lib/domain";
+import SubmitButton from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
 
@@ -106,7 +107,7 @@ POST /api/worker/report    Body: {"attempt_id":"...","result":"success|uncertain
                             ))}
                         </select>
                         <input name="detail" placeholder="備考" className={`${inputCls} w-28 py-1 text-xs`} />
-                        <button className={btnSmall}>記録</button>
+                        <SubmitButton variant="small">記録</SubmitButton>
                       </form>
                     </td>
                   </tr>

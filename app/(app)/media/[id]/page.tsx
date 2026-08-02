@@ -9,8 +9,9 @@ import {
   mergeMedia,
   suggestContactFix,
 } from "@/app/actions";
-import { Card, Badge, Empty, btnAccent, btnGhost, btnSmall, inputCls, labelCls } from "@/components/ui";
+import { Card, Badge, Empty, inputCls, labelCls } from "@/components/ui";
 import { OUTREACH_STATUS, SEND_RESULT, statusTone } from "@/lib/domain";
+import SubmitButton from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
 
@@ -56,16 +57,14 @@ export default async function MediaDetail({ params }: { params: Promise<{ id: st
               <input type="hidden" name="id" value={id} />
               <input type="hidden" name="to" value="false" />
               <Badge tone="bg-red-100 text-red-700">営業お断り</Badge>
-              <button className={btnSmall} disabled={profile?.role !== "admin"}>
-                解除（管理者のみ）
-              </button>
+              <SubmitButton variant="small" disabled={profile?.role !== "admin"}>解除（管理者のみ）</SubmitButton>
             </form>
           ) : (
             <form action={toggleNoSolicitation} className="flex items-center gap-2">
               <input type="hidden" name="id" value={id} />
               <input type="hidden" name="to" value="true" />
               <input name="reason" placeholder="理由" className={`${inputCls} w-40`} />
-              <button className={btnGhost}>営業お断りにする</button>
+              <SubmitButton variant="ghost">営業お断りにする</SubmitButton>
             </form>
           )}
         </div>
@@ -105,7 +104,7 @@ export default async function MediaDetail({ params }: { params: Promise<{ id: st
                 <textarea name="note" defaultValue={m.note} rows={4} className={inputCls} />
               </div>
             </div>
-            <button className={btnAccent}>保存</button>
+            <SubmitButton variant="accent">保存</SubmitButton>
           </form>
         </Card>
 
@@ -120,7 +119,7 @@ export default async function MediaDetail({ params }: { params: Promise<{ id: st
                 <form action={deleteContact}>
                   <input type="hidden" name="id" value={c.id} />
                   <input type="hidden" name="media_id" value={id} />
-                  <button className={btnSmall}>削除</button>
+                  <SubmitButton variant="small">削除</SubmitButton>
                 </form>
               </li>
             ))}
@@ -134,11 +133,11 @@ export default async function MediaDetail({ params }: { params: Promise<{ id: st
               <option value="dm">DM</option>
             </select>
             <input name="value" placeholder="URL または メールアドレス" className={inputCls} required />
-            <button className={btnGhost}>追加</button>
+            <SubmitButton variant="ghost">追加</SubmitButton>
           </form>
           <form action={suggestContactFix} className="mt-2">
             <input type="hidden" name="media_id" value={id} />
-            <button className={btnSmall}>AIに問い合わせURL候補を出させる（未検証・要確認）</button>
+            <SubmitButton variant="small" pendingLabel="AIが候補を作成中…">AIに問い合わせURL候補を出させる（未検証・要確認）</SubmitButton>
           </form>
         </Card>
       </div>
@@ -205,7 +204,7 @@ export default async function MediaDetail({ params }: { params: Promise<{ id: st
               ))}
             </select>
           </div>
-          <button className={btnGhost}>このメディアを統合する</button>
+          <SubmitButton variant="ghost">このメディアを統合する</SubmitButton>
         </form>
       </Card>
     </div>

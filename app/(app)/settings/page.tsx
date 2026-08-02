@@ -1,6 +1,7 @@
 import { getSessionProfile } from "@/lib/supabase/server";
 import { addAsp, deleteAsp, saveTenantSettings, saveProfile } from "@/app/actions";
-import { Card, Empty, btnAccent, btnSmall, inputCls, labelCls } from "@/components/ui";
+import { Card, Empty, inputCls, labelCls } from "@/components/ui";
+import SubmitButton from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
 
@@ -35,7 +36,7 @@ export default async function SettingsPage() {
               <label className={labelCls}>署名</label>
               <textarea name="signature" defaultValue={profile!.signature} rows={5} className={inputCls} />
             </div>
-            <button className={btnAccent}>保存</button>
+            <SubmitButton variant="accent">保存</SubmitButton>
           </form>
         </Card>
 
@@ -64,7 +65,7 @@ export default async function SettingsPage() {
                 送信元ドメインのレピュテーション保護のため、ワーカー側がこの値を上限として実行します。
               </p>
             </div>
-            <button className={btnAccent}>保存</button>
+            <SubmitButton variant="accent">保存</SubmitButton>
           </form>
         </Card>
       </div>
@@ -77,7 +78,7 @@ export default async function SettingsPage() {
               <span className="text-slate-600">{a.asp_name}</span>
               <form action={deleteAsp} className="ml-auto">
                 <input type="hidden" name="id" value={a.id} />
-                <button className={btnSmall}>削除</button>
+                <SubmitButton variant="small">削除</SubmitButton>
               </form>
             </li>
           ))}
@@ -86,7 +87,7 @@ export default async function SettingsPage() {
         <form action={addAsp} className="flex gap-2">
           <input name="domain" placeholder="example.com" className={inputCls} required />
           <input name="asp_name" placeholder="ASP名" className={inputCls} />
-          <button className={btnAccent}>追加</button>
+          <SubmitButton variant="accent">追加</SubmitButton>
         </form>
       </Card>
 
