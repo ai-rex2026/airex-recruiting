@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { getSessionProfile } from "@/lib/supabase/server";
 import { ingestCollection } from "@/app/actions";
 import { Card, Empty, inputCls, labelCls } from "@/components/ui";
@@ -34,6 +35,13 @@ export default async function CollectPage({
         <h1 className="text-xl font-bold text-[#1B2A4A]">収集（業務①）</h1>
         <p className="mt-1 text-xs text-slate-500">
           検索結果を貼り付けると、AIがランキング／比較記事かを判定し、掲載状況・競合・ASP区分まで整理して陣取り表を作ります。
+        </p>
+        <p className="mt-1 text-xs text-slate-500">
+          URLや商品テキストから自動で収集するには{" "}
+          <Link href="/start" className="font-semibold text-[#C1553B] underline">
+            かんたん開始
+          </Link>{" "}
+          へ。
         </p>
       </header>
 
