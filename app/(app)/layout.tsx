@@ -9,6 +9,7 @@ import { Suspense } from "react";
 export const dynamic = "force-dynamic";
 
 const NAV = [
+  { href: "/start", label: "かんたん開始" },
   { href: "/dashboard", label: "ダッシュボード" },
   { href: "/queue", label: "承認キュー", key: "queue" },
   { href: "/board", label: "陣取りボード" },
