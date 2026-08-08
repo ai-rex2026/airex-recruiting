@@ -8,21 +8,44 @@ import { Suspense } from "react";
 
 export const dynamic = "force-dynamic";
 
-const NAV = [
-  { href: "/start", label: "かんたん開始" },
-  { href: "/dashboard", label: "ダッシュボード" },
-  { href: "/queue", label: "承認キュー", key: "queue" },
-  { href: "/board", label: "陣取りボード" },
-  { href: "/collect", label: "収集" },
-  { href: "/media", label: "メディア台帳" },
-  { href: "/outbox", label: "送信ログ" },
-  { href: "/exceptions", label: "例外対応", key: "exceptions" },
-  { href: "/replies", label: "返信・交渉" },
-  { href: "/placements", label: "掲載・報告" },
-  { href: "/campaigns", label: "案件・KW" },
-  { href: "/templates", label: "文面テンプレ" },
-  { href: "/settings", label: "設定" },
-  { href: "/audit", label: "監査ログ" },
+type NavItem = { href: string; label: string; key?: string };
+
+// 業務フロー順のナビ（① 集める → ② 打診する → ③ 返信・掲載 → ④ 台帳・管理）
+const NAV_SECTIONS: { label: string; items: NavItem[] }[] = [
+  {
+    label: "① 集める",
+    items: [
+      { href: "/start", label: "かんたん開始" },
+      { href: "/collect", label: "収集" },
+      { href: "/board", label: "陣取りボード" },
+    ],
+  },
+  {
+    label: "② 打診する",
+    items: [
+      { href: "/queue", label: "承認キュー", key: "queue" },
+      { href: "/outbox", label: "送信ログ" },
+      { href: "/exceptions", label: "例外対応", key: "exceptions" },
+    ],
+  },
+  {
+    label: "③ 返信・掲載",
+    items: [
+      { href: "/replies", label: "返信・交渉" },
+      { href: "/placements", label: "掲載・報告" },
+    ],
+  },
+  {
+    label: "④ 台帳・管理",
+    items: [
+      { href: "/media", label: "メディア台帳" },
+      { href: "/campaigns", label: "案件・KW" },
+      { href: "/templates", label: "文面テンプレ" },
+      { href: "/dashboard", label: "ダッシュボード" },
+      { href: "/settings", label: "設定" },
+      { href: "/audit", label: "監査ログ" },
+    ],
+  },
 ];
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -55,19 +78,26 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <p className="mt-0.5 text-sm font-bold text-[#1B2A4A]">リクルーティング基盤</p>
         </div>
         <nav className="p-2">
-          {NAV.map((n) => (
-            <Link
-              key={n.href}
-              href={n.href}
-              className="flex items-center justify-between rounded-lg px-3 py-2 text-[13px] text-slate-700 transition hover:bg-slate-100"
-            >
-              <span>{n.label}</span>
-              {n.key && counts[n.key] > 0 && (
-                <span className="rounded-full bg-[#C1553B] px-1.5 py-0.5 text-[10px] font-bold text-white">
-                  {counts[n.key]}
-                </span>
-              )}
-            </Link>
+          {NAV_SECTIONS.map((sec) => (
+            <div key={sec.label}>
+              <p className="px-3 pb-1 pt-3 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                {sec.label}
+              </p>
+              {sec.items.map((n) => (
+                <Link
+                  key={n.href}
+                  href={n.href}
+                  className="flex items-center justify-between rounded-lg px-3 py-2 text-[13px] text-slate-700 transition hover:bg-slate-100"
+                >
+                  <span>{n.label}</span>
+                  {n.key && counts[n.key] > 0 && (
+                    <span className="rounded-full bg-[#C1553B] px-1.5 py-0.5 text-[10px] font-bold text-white">
+                      {counts[n.key]}
+                    </span>
+                  )}
+                </Link>
+              ))}
+            </div>
           ))}
         </nav>
         <div className="border-t border-slate-100 p-4">
