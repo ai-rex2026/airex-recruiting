@@ -4,6 +4,7 @@ import { getSessionProfile } from "@/lib/supabase/server";
 import { signOut } from "@/app/actions";
 import TopProgress from "@/components/TopProgress";
 import SubmitButton from "@/components/SubmitButton";
+import FlowBar from "@/components/FlowBar";
 import { Suspense } from "react";
 
 export const dynamic = "force-dynamic";
@@ -52,19 +53,21 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const { sb, user, profile } = await getSessionProfile();
   if (!user || !profile) redirect("/login");
 
-  const [{ count: queueCount }, { count: excCount }] = await Promise.all([
-    sb
-      .from("outreach_targets")
-      .select("id", { count: "exact", head: true })
-      .in("status", ["awaiting_approval", "replied"]),
-    sb
-      .from("outreach_targets")
-      .select("id", { count: "exact", head: true })
-      .in("status", ["exception", "uncertain"]),
-  ]);
+  // ステータスを1クエリで取得し、ナビのバッジと業務フローバーの件数をまとめて算出する
+  const { data: statusRows } = await sb.from("outreach_targets").select("status");
+  const countOf = (statuses: string[]) =>
+    (statusRows ?? []).filter((t) => statuses.includes(t.status)).length;
+
   const counts: Record<string, number> = {
-    queue: queueCount ?? 0,
-    exceptions: excCount ?? 0,
+    queue: countOf(["awaiting_approval", "replied"]),
+    exceptions: countOf(["exception", "uncertain"]),
+  };
+  const flowCounts = {
+    collect: countOf(["collected", "confirmed"]),
+    outreach: countOf(["awaiting_approval", "queued"]),
+    exceptions: countOf(["exception", "uncertain"]),
+    reply: countOf(["sent", "replied", "negotiating"]),
+    place: countOf(["placeable", "placed"]),
   };
 
   return (
@@ -110,7 +113,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           </form>
         </div>
       </aside>
-      <main className="min-w-0 flex-1 p-6">{children}</main>
+      <main className="min-w-0 flex-1 p-6">
+        <FlowBar counts={flowCounts} />
+        {children}
+      </main>
     </div>
   );
 }
