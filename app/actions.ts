@@ -43,7 +43,7 @@ export async function signIn(_prev: unknown, formData: FormData) {
   const sb = await createClient();
   const { error } = await sb.auth.signInWithPassword({ email, password });
   if (error) return { error: "メールアドレスまたはパスワードが違います。" };
-  redirect("/dashboard");
+  redirect("/start");
 }
 
 export async function signOut() {
