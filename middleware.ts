@@ -42,7 +42,9 @@ export async function middleware(request: NextRequest) {
   }
   if (user && path === "/login") {
     const url = request.nextUrl.clone();
-    url.pathname = "/dashboard";
+    // ログイン済みなら標準の入口（かんたん開始）へ。?next= があればそちらを優先
+    const next = request.nextUrl.searchParams.get("next");
+    url.pathname = next && next.startsWith("/") && !next.startsWith("//") ? next : "/start";
     url.search = "";
     return NextResponse.redirect(url);
   }
