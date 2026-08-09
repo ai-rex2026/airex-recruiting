@@ -2,17 +2,48 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getSessionProfile } from "@/lib/supabase/server";
 import { addKeywords, deleteKeyword, suggestKeywords } from "@/app/actions";
-import { Card, Empty, btnAccent, btnGhost, btnSmall, inputCls } from "@/components/ui";
+import { updateCampaignInfo } from "@/app/start-actions";
+import BoardView from "@/components/BoardView";
+import CampaignJobs, { type CampaignGroup, type JobInfo } from "@/app/(app)/start/CampaignJobs";
+import { Card, Empty, Badge, btnGhost, btnSmall, inputCls, labelCls } from "@/components/ui";
+import { OUTREACH_STATUS, SEND_RESULT, REPLY_CLASS, statusTone } from "@/lib/domain";
 import SubmitButton from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
+// 収集状況タブの自動収集アクションはこのセグメントで実行される
+export const maxDuration = 60;
+
+const TABS = [
+  { id: "collect", label: "収集状況" },
+  { id: "board", label: "陣取りボード" },
+  { id: "outreach", label: "打診・返信・掲載" },
+  { id: "info", label: "案件情報・KW" },
+] as const;
+
+type TabId = (typeof TABS)[number]["id"];
+
+type JobRow = {
+  id: string;
+  keyword_id: string;
+  status: "pending" | "running" | "done" | "error";
+  found_count: number;
+  ranking_count: number;
+  error_detail: string;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+};
 
 export default async function CampaignDetail({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ tab?: string; autorun?: string }>;
 }) {
   const { id } = await params;
+  const sp = await searchParams;
+  const tab: TabId = (TABS.some((t) => t.id === sp.tab) ? sp.tab : "collect") as TabId;
   const { sb } = await getSessionProfile();
 
   const { data: c } = await sb
@@ -22,139 +53,330 @@ export default async function CampaignDetail({
     .maybeSingle();
   if (!c) notFound();
 
-  const { data: kws } = await sb
-    .from("keywords")
-    .select("*, snapshots:serp_snapshots(id, collected_at)")
-    .eq("campaign_id", id)
-    .order("created_at");
+  const [{ data: kws }, { data: targets }, { data: jobs }] = await Promise.all([
+    sb
+      .from("keywords")
+      .select("*, snapshots:serp_snapshots(id, collected_at)")
+      .eq("campaign_id", id)
+      .order("created_at"),
+    sb.from("outreach_targets").select("status").eq("campaign_id", id),
+    sb
+      .from("collection_jobs")
+      .select("id, keyword_id, status, found_count, ranking_count, error_detail, started_at, finished_at, created_at")
+      .eq("campaign_id", id)
+      .order("created_at", { ascending: false }),
+  ]);
 
-  const { data: targets } = await sb
-    .from("outreach_targets")
-    .select("status")
-    .eq("campaign_id", id);
+  const clientName = (c.client as unknown as { name: string } | null)?.name ?? "";
+  const cnt = (statuses: string[]) => (targets ?? []).filter((t) => statuses.includes(t.status)).length;
+  const placedN = cnt(["placed", "reported"]);
 
-  const cnt = (s: string) => (targets ?? []).filter((t) => t.status === s).length;
+  // 収集状況タブ用のグループ（KW×最新ジョブ）
+  const latestByKw = new Map<string, JobRow>();
+  for (const j of (jobs ?? []) as JobRow[]) if (!latestByKw.has(j.keyword_id)) latestByKw.set(j.keyword_id, j);
+  const group: CampaignGroup = {
+    id,
+    name: c.name,
+    client: clientName,
+    last_collected:
+      ((jobs ?? []) as JobRow[])
+        .map((j) => j.finished_at)
+        .filter(Boolean)
+        .sort()
+        .at(-1) ?? null,
+    kws: (kws ?? []).map((k) => {
+      const j = latestByKw.get(k.id);
+      const job: JobInfo | null = j
+        ? {
+            job_id: j.id,
+            status: j.status,
+            found: j.found_count ?? 0,
+            ranking: j.ranking_count ?? 0,
+            error: j.error_detail ?? "",
+            started_at: j.started_at,
+            finished_at: j.finished_at,
+          }
+        : null;
+      return { keyword_id: k.id, keyword: k.keyword, job };
+    }),
+  };
 
   return (
     <div className="space-y-6">
-      <header className="flex items-start justify-between gap-4">
-        <div>
-          <p className="text-xs text-slate-500">
-            <Link href="/campaigns" className="hover:underline">
-              案件一覧
-            </Link>{" "}
-            /{" "}
-            {(c.client as unknown as { name: string } | null)?.name ?? "クライアント未設定"}
-          </p>
-          <h1 className="mt-1 text-xl font-bold text-[#1B2A4A]">{c.name}</h1>
+      <header>
+        <p className="text-xs text-slate-500">
+          <Link href="/start" className="hover:underline">
+            案件・収集
+          </Link>{" "}
+          / {clientName || "クライアント未設定"}
+        </p>
+        <div className="mt-1 flex flex-wrap items-center gap-2">
+          <h1 className="text-xl font-bold text-[#1B2A4A]">{c.name}</h1>
+          <Badge tone={c.status === "active" ? "bg-emerald-100 text-emerald-800" : "bg-zinc-200 text-zinc-600"}>
+            {c.status === "active" ? "進行中" : c.status === "paused" ? "一時停止" : "終了"}
+          </Badge>
         </div>
-        <div className="flex gap-2">
-          <Link href={`/collect?campaign=${id}`} className={btnAccent}>
-            収集を実行
-          </Link>
-          <Link href={`/board?campaign=${id}`} className={btnGhost}>
-            陣取りボード
-          </Link>
+        <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-600">
+          <span className="rounded-lg bg-slate-100 px-2 py-1">KW {(kws ?? []).length}件</span>
+          <span className="rounded-lg bg-slate-100 px-2 py-1">打診 {(targets ?? []).length}件</span>
+          <span className="rounded-lg bg-slate-100 px-2 py-1">承認待ち {cnt(["awaiting_approval"])}件</span>
+          <span className="rounded-lg bg-slate-100 px-2 py-1">掲載 {placedN}件</span>
+          <span className="rounded-lg bg-slate-100 px-2 py-1">
+            最終収集 {group.last_collected ? new Date(group.last_collected).toLocaleString("ja-JP") : "—"}
+          </span>
         </div>
       </header>
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        <Card title="案件情報">
-          <dl className="space-y-2 text-sm">
-            {[
-              ["商材", c.product_name],
-              ["LP", c.lp_url],
-              ["単価", c.unit_price],
-              ["成果地点", c.conversion_point],
-              ["承認条件", c.approval_terms],
-              ["訴求・信用点", c.selling_points],
-            ].map(([k, v]) => (
-              <div key={k as string}>
-                <dt className="text-[11px] text-slate-500">{k}</dt>
-                <dd className="break-all text-slate-800">{(v as string) || "—"}</dd>
-              </div>
-            ))}
-          </dl>
-        </Card>
+      {/* タブ */}
+      <nav className="flex flex-wrap gap-1.5 border-b border-slate-200 pb-2">
+        {TABS.map((t) => (
+          <Link
+            key={t.id}
+            href={`/campaigns/${id}?tab=${t.id}`}
+            className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
+              tab === t.id
+                ? "bg-[#1B2A4A] text-white"
+                : "bg-white text-slate-600 hover:bg-slate-100"
+            }`}
+          >
+            {t.label}
+          </Link>
+        ))}
+      </nav>
 
-        <Card title="この案件の進捗">
-          <div className="grid grid-cols-2 gap-2 text-sm">
-            {[
-              ["収集済", "collected"],
-              ["対象確定", "confirmed"],
-              ["承認待ち", "awaiting_approval"],
-              ["送信済", "sent"],
-              ["返信あり", "replied"],
-              ["掲載中", "placed"],
-            ].map(([label, key]) => (
-              <div key={key} className="rounded-lg bg-slate-50 px-3 py-2">
-                <div className="text-[11px] text-slate-500">{label}</div>
-                <div className="text-lg font-bold text-[#1B2A4A]">{cnt(key)}</div>
-              </div>
-            ))}
-          </div>
-        </Card>
+      {tab === "collect" && (
+        <>
+          <p className="text-xs text-slate-500">
+            収集中にこの画面を閉じても、状態はここに残ります。未実行のKWは「再開」から続けられます。
+          </p>
+          <CampaignJobs
+            group={group}
+            boardHref={`/campaigns/${id}?tab=board`}
+            autoResume={sp.autorun === "1"}
+          />
+        </>
+      )}
 
-        <Card title="キーワードを追加">
-          <form action={addKeywords} className="space-y-3">
-            <input type="hidden" name="campaign_id" value={id} />
-            <textarea
-              name="keywords"
-              rows={5}
-              className={inputCls}
-              placeholder={"改行または読点で区切って入力"}
-            />
-            <SubmitButton variant="accent">追加</SubmitButton>
-          </form>
-          <form action={suggestKeywords} className="mt-3">
-            <input type="hidden" name="campaign_id" value={id} />
-            <SubmitButton variant="ghost" pendingLabel="AIが考えています…">AIにKWを提案させる</SubmitButton>
-          </form>
-        </Card>
+      {tab === "board" && <BoardView campaignId={id} />}
+
+      {tab === "outreach" && <OutreachTab campaignId={id} />}
+
+      {tab === "info" && (
+        <div className="space-y-6">
+          <Card title="案件情報" desc="変更は文面生成・報告書に反映されます">
+            <form action={updateCampaignInfo} className="grid gap-4 md:grid-cols-2">
+              <input type="hidden" name="id" value={id} />
+              <div>
+                <label className={labelCls}>案件名 *</label>
+                <input name="name" required defaultValue={c.name} className={inputCls} />
+              </div>
+              <div>
+                <label className={labelCls}>商材名</label>
+                <input name="product_name" defaultValue={c.product_name} className={inputCls} />
+              </div>
+              <div>
+                <label className={labelCls}>LP URL</label>
+                <input name="lp_url" defaultValue={c.lp_url} className={inputCls} placeholder="https://" />
+              </div>
+              <div>
+                <label className={labelCls}>単価（グロス／ネット）</label>
+                <input name="unit_price" defaultValue={c.unit_price} className={inputCls} />
+              </div>
+              <div>
+                <label className={labelCls}>成果地点</label>
+                <input name="conversion_point" defaultValue={c.conversion_point} className={inputCls} />
+              </div>
+              <div>
+                <label className={labelCls}>承認条件</label>
+                <input name="approval_terms" defaultValue={c.approval_terms} className={inputCls} />
+              </div>
+              <div className="md:col-span-2">
+                <label className={labelCls}>訴求ポイント・信用点</label>
+                <textarea name="selling_points" defaultValue={c.selling_points} rows={2} className={inputCls} />
+              </div>
+              <div className="md:col-span-2">
+                <SubmitButton variant="accent">保存</SubmitButton>
+              </div>
+            </form>
+          </Card>
+
+          <Card title="キーワードを追加">
+            <form action={addKeywords} className="space-y-3">
+              <input type="hidden" name="campaign_id" value={id} />
+              <textarea
+                name="keywords"
+                rows={4}
+                className={inputCls}
+                placeholder={"改行または読点で区切って入力"}
+              />
+              <SubmitButton variant="accent">追加</SubmitButton>
+            </form>
+            <form action={suggestKeywords} className="mt-3">
+              <input type="hidden" name="campaign_id" value={id} />
+              <SubmitButton variant="ghost" pendingLabel="AIが考えています…">AIにKWを提案させる</SubmitButton>
+            </form>
+          </Card>
+
+          <Card title="キーワード一覧" desc="収集の実行単位。定点観測の履歴もここに紐づきます">
+            {(kws ?? []).length === 0 ? (
+              <Empty>キーワードが未登録です。</Empty>
+            ) : (
+              <table className="tbl w-full text-sm">
+                <thead>
+                  <tr className="text-left text-[11px] text-slate-500">
+                    <th className="pb-2">キーワード</th>
+                    <th className="pb-2 text-right">収集回数</th>
+                    <th className="pb-2">最終収集</th>
+                    <th className="pb-2"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(kws ?? []).map((k) => {
+                    const snaps = (k.snapshots as unknown as { collected_at: string }[]) ?? [];
+                    const last = snaps
+                      .map((s) => s.collected_at)
+                      .sort()
+                      .at(-1);
+                    return (
+                      <tr key={k.id}>
+                        <td className="py-2 font-medium">{k.keyword}</td>
+                        <td className="py-2 text-right">{snaps.length}</td>
+                        <td className="py-2 text-slate-600">
+                          {last ? new Date(last).toLocaleString("ja-JP") : "未収集"}
+                        </td>
+                        <td className="py-2 text-right">
+                          <Link href={`/campaigns/${id}?tab=collect`} className={btnSmall}>
+                            収集状況へ
+                          </Link>{" "}
+                          <Link href={`/collect?campaign=${id}&keyword=${k.id}`} className={btnSmall}>
+                            貼り付け収集
+                          </Link>{" "}
+                          <form action={deleteKeyword} className="inline">
+                            <input type="hidden" name="id" value={k.id} />
+                            <input type="hidden" name="campaign_id" value={id} />
+                            <SubmitButton variant="small">削除</SubmitButton>
+                          </form>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </Card>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 打診・返信・掲載タブ：この案件の outreach_targets を横断ビューで表示する */
+async function OutreachTab({ campaignId }: { campaignId: string }) {
+  const { sb } = await getSessionProfile();
+  const { data: otargets } = await sb
+    .from("outreach_targets")
+    .select(
+      "*, media:media(id, name, domain), attempts:send_attempts(result, sent_at, queued_at), replies:replies(ai_class, final_class, received_at), placements:placements(id, article_url, position_in_article, started_on)"
+    )
+    .eq("campaign_id", campaignId)
+    .order("rank", { ascending: true, nullsFirst: false });
+
+  const rows = otargets ?? [];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-2">
+        <Link href="/queue" className={btnGhost}>
+          承認キューで処理する
+        </Link>
+        <Link href="/replies" className={btnGhost}>
+          返信・交渉
+        </Link>
+        <Link href="/placements" className={btnGhost}>
+          掲載・報告
+        </Link>
+        <Link href="/outbox" className={btnGhost}>
+          送信ログ
+        </Link>
       </div>
 
-      <Card title="キーワード一覧" desc="収集の実行単位。定点観測の履歴もここに紐づきます">
-        {(kws ?? []).length === 0 ? (
-          <Empty>キーワードが未登録です。</Empty>
+      <Card title={`打診一覧（${rows.length}件）`} desc="この案件の打診・返信・掲載の現在地。個別の操作は各画面で行います">
+        {rows.length === 0 ? (
+          <Empty>まだ打診がありません。収集を実行して陣取りボードで対象を確定してください。</Empty>
         ) : (
-          <table className="tbl w-full text-sm">
-            <thead>
-              <tr className="text-left text-[11px] text-slate-500">
-                <th className="pb-2">キーワード</th>
-                <th className="pb-2 text-right">収集回数</th>
-                <th className="pb-2">最終収集</th>
-                <th className="pb-2"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {(kws ?? []).map((k) => {
-                const snaps = (k.snapshots as unknown as { collected_at: string }[]) ?? [];
-                const last = snaps
-                  .map((s) => s.collected_at)
-                  .sort()
-                  .at(-1);
-                return (
-                  <tr key={k.id}>
-                    <td className="py-2 font-medium">{k.keyword}</td>
-                    <td className="py-2 text-right">{snaps.length}</td>
-                    <td className="py-2 text-slate-600">
-                      {last ? new Date(last).toLocaleString("ja-JP") : "未収集"}
-                    </td>
-                    <td className="py-2 text-right">
-                      <Link href={`/collect?campaign=${id}&keyword=${k.id}`} className={btnSmall}>
-                        収集
-                      </Link>{" "}
-                      <form action={deleteKeyword} className="inline">
-                        <input type="hidden" name="id" value={k.id} />
-                        <input type="hidden" name="campaign_id" value={id} />
-                        <SubmitButton variant="small">削除</SubmitButton>
-                      </form>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <div className="overflow-x-auto">
+            <table className="tbl w-full text-sm">
+              <thead>
+                <tr className="text-left text-[11px] text-slate-500">
+                  <th className="pb-2">メディア</th>
+                  <th className="pb-2">打診種別</th>
+                  <th className="pb-2">状態</th>
+                  <th className="pb-2">最終送信</th>
+                  <th className="pb-2">返信</th>
+                  <th className="pb-2">掲載</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((t) => {
+                  const m = t.media as unknown as { id: string; name: string; domain: string } | null;
+                  const atts = ((t.attempts as unknown as { result: string; sent_at: string | null; queued_at: string }[]) ?? [])
+                    .slice()
+                    .sort((a, b) => ((a.sent_at ?? a.queued_at) < (b.sent_at ?? b.queued_at) ? 1 : -1));
+                  const att = atts[0];
+                  const reps = ((t.replies as unknown as { ai_class: string; final_class: string; received_at: string }[]) ?? [])
+                    .slice()
+                    .sort((a, b) => (a.received_at < b.received_at ? 1 : -1));
+                  const rep = reps[0];
+                  const repClass = rep?.final_class || rep?.ai_class || "";
+                  const pls = (t.placements as unknown as { article_url: string; position_in_article: number | null; started_on: string | null }[]) ?? [];
+                  const pl = pls[0];
+                  return (
+                    <tr key={t.id}>
+                      <td className="py-2">
+                        <Link href={`/media/${m?.id}`} className="font-medium hover:underline">
+                          {m?.name || m?.domain}
+                        </Link>
+                        <div className="text-[11px] text-slate-400">{m?.domain}</div>
+                      </td>
+                      <td className="py-2 text-xs">{t.kind === "replace" ? "リプレイス" : "新規"}</td>
+                      <td className="py-2">
+                        <Badge tone={statusTone(t.status)}>
+                          {OUTREACH_STATUS[t.status as keyof typeof OUTREACH_STATUS] ?? t.status}
+                        </Badge>
+                      </td>
+                      <td className="py-2 text-[11px] text-slate-600">
+                        {att
+                          ? `${new Date(att.sent_at ?? att.queued_at).toLocaleDateString("ja-JP")} ${
+                              SEND_RESULT[att.result as keyof typeof SEND_RESULT] ?? att.result
+                            }`
+                          : "—"}
+                      </td>
+                      <td className="py-2 text-[11px] text-slate-600">
+                        {rep
+                          ? `${REPLY_CLASS[repClass as keyof typeof REPLY_CLASS] ?? "未分類"}（${reps.length}件）`
+                          : "—"}
+                      </td>
+                      <td className="py-2 text-[11px] text-slate-600">
+                        {pl ? (
+                          <span>
+                            {pl.position_in_article ? `${pl.position_in_article}位 ` : ""}
+                            {pl.started_on ?? ""}
+                            {pl.article_url && (
+                              <a href={pl.article_url} target="_blank" rel="noreferrer" className="ml-1 text-sky-700 underline">
+                                記事
+                              </a>
+                            )}
+                          </span>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </Card>
     </div>
