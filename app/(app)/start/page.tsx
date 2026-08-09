@@ -75,9 +75,9 @@ export default async function StartPage() {
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="text-xl font-bold text-[#1B2A4A]">収集センター</h1>
+        <h1 className="text-xl font-bold text-[#1B2A4A]">案件・収集</h1>
         <p className="mt-1 text-xs text-slate-500">
-          商品のURLやテキストから自動収集を開始し、案件×キーワードごとの収集状況をここで管理します。
+          商品のURLやテキストから自動収集を開始し、案件×キーワードごとの収集状況をここで管理します。案件名から案件詳細（陣取りボード・打診状況）へ移動できます。
         </p>
         <p className="mt-1 text-xs text-slate-500">
           収集中にこの画面を閉じても、状態はここに残ります。未実行のKWは「再開」から続けられます。
