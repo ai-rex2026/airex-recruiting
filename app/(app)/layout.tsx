@@ -11,38 +11,22 @@ export const dynamic = "force-dynamic";
 
 type NavItem = { href: string; label: string; key?: string };
 
-// 業務フロー順のナビ（① 集める → ② 打診する → ③ 返信・掲載 → ④ 台帳・管理）
-const NAV_SECTIONS: { label: string; items: NavItem[] }[] = [
+// サイドバーは横断的な作業キューと台帳だけに絞る。
+// 案件ごとの画面（陣取りボード・打診・返信・掲載など）は 案件詳細ハブ /campaigns/[id] のタブから辿る。
+const NAV_SECTIONS: { label?: string; items: NavItem[] }[] = [
   {
-    label: "① 集める",
     items: [
-      { href: "/start", label: "収集センター" },
-      { href: "/collect", label: "収集" },
-      { href: "/board", label: "陣取りボード" },
-    ],
-  },
-  {
-    label: "② 打診する",
-    items: [
+      { href: "/start", label: "案件・収集" },
       { href: "/queue", label: "承認キュー", key: "queue" },
-      { href: "/outbox", label: "送信ログ" },
       { href: "/exceptions", label: "例外対応", key: "exceptions" },
-    ],
-  },
-  {
-    label: "③ 返信・掲載",
-    items: [
-      { href: "/replies", label: "返信・交渉" },
-      { href: "/placements", label: "掲載・報告" },
-    ],
-  },
-  {
-    label: "④ 台帳・管理",
-    items: [
       { href: "/media", label: "メディア台帳" },
-      { href: "/campaigns", label: "案件・KW" },
-      { href: "/templates", label: "文面テンプレ" },
+    ],
+  },
+  {
+    label: "管理",
+    items: [
       { href: "/dashboard", label: "ダッシュボード" },
+      { href: "/templates", label: "文面テンプレ" },
       { href: "/settings", label: "設定" },
       { href: "/audit", label: "監査ログ" },
     ],
@@ -81,11 +65,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <p className="mt-0.5 text-sm font-bold text-[#1B2A4A]">リクルーティング基盤</p>
         </div>
         <nav className="p-2">
-          {NAV_SECTIONS.map((sec) => (
-            <div key={sec.label}>
-              <p className="px-3 pb-1 pt-3 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                {sec.label}
-              </p>
+          {NAV_SECTIONS.map((sec, si) => (
+            <div key={sec.label ?? si}>
+              {sec.label && (
+                <p className="px-3 pb-1 pt-3 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                  {sec.label}
+                </p>
+              )}
               {sec.items.map((n) => (
                 <Link
                   key={n.href}
