@@ -162,10 +162,12 @@ ${material}
   return { ok: true, draft, input_url: inputUrl, note };
 }
 
-/* ============ Step 2: ドラフト確定 → 案件・KW作成 ============ */
+/* ============ Step 2: ドラフト確定 → 案件・KW作成（＋収集ジョブ登録） ============ */
+
+export type RunnableJob = { job_id: string; keyword_id: string; keyword: string };
 
 export type CreateFromDraftResult =
-  | { ok: true; campaign_id: string; keywords: { id: string; keyword: string }[] }
+  | { ok: true; campaign_id: string; jobs: RunnableJob[] }
   | { ok: false; error: string };
 
 export async function createCampaignFromDraft(payload: {
@@ -239,6 +241,21 @@ export async function createCampaignFromDraft(payload: {
     .select("id, keyword");
   if (kwErr) return { ok: false, error: `キーワードの登録に失敗しました：${kwErr.message}` };
 
+  // キーワードごとに収集ジョブ（pending）を登録する。進捗はウィザードを閉じても /start に残る
+  const { data: jobRows } = await sb
+    .from("collection_jobs")
+    .insert(
+      (kwRows ?? []).map((k) => ({
+        tenant_id: profile.tenant_id,
+        campaign_id: camp.id,
+        keyword_id: k.id,
+        status: "pending",
+        source: "ai_web_search",
+      }))
+    )
+    .select("id, keyword_id");
+  const jobByKw = new Map((jobRows ?? []).map((j) => [j.keyword_id, j.id]));
+
   await audit(
     sb,
     profile.tenant_id,
@@ -251,8 +268,15 @@ export async function createCampaignFromDraft(payload: {
   );
   revalidatePath("/campaigns");
   revalidatePath("/board");
+  revalidatePath("/start");
 
-  return { ok: true, campaign_id: camp.id, keywords: kwRows ?? [] };
+  return {
+    ok: true,
+    campaign_id: camp.id,
+    jobs: (kwRows ?? [])
+      .filter((k) => jobByKw.has(k.id))
+      .map((k) => ({ job_id: jobByKw.get(k.id) as string, keyword_id: k.id, keyword: k.keyword })),
+  };
 }
 
 /* ============ Step 3: 1キーワードずつ Web検索で自動収集 ============ */
@@ -270,8 +294,19 @@ type FoundSite = {
 };
 
 export type CollectAutoResult =
-  | { ok: true; found: number; ranking_articles: number; media_new: number }
+  | { ok: true; job_id: string; found: number; ranking_articles: number; media_new: number }
   | { ok: false; error: string };
+
+/** running のまま5分を超えたジョブは中断とみなして引き継ぐ */
+const STALE_RUNNING_MS = 5 * 60 * 1000;
+
+function isFreshRunning(job: { status: string; started_at: string | null }): boolean {
+  return (
+    job.status === "running" &&
+    !!job.started_at &&
+    Date.now() - new Date(job.started_at).getTime() < STALE_RUNNING_MS
+  );
+}
 
 function extractLastJsonBlock<T>(text: string, anchor: string): T | null {
   const tryParse = (s: string): T | null => {
@@ -296,19 +331,59 @@ function extractLastJsonBlock<T>(text: string, anchor: string): T | null {
   return tryParse(text.slice(first, end + 1));
 }
 
-export async function collectKeywordAuto(
-  campaignId: string,
-  keywordId: string
-): Promise<CollectAutoResult> {
+export async function collectKeywordAuto(jobId: string): Promise<CollectAutoResult> {
   const { sb, profile } = await ctx();
 
   if (!hasAnthropic()) {
     return { ok: false, error: "ANTHROPIC_API_KEY が未設定です。/collect の貼り付け方式をご利用ください。" };
   }
 
+  let { data: job } = await sb.from("collection_jobs").select("*").eq("id", jobId).maybeSingle();
+  if (!job) return { ok: false, error: "収集ジョブが見つかりません。" };
+
+  // 二重実行ガード：running かつ開始から5分以内なら実行しない（5分超は中断とみなして引き継ぐ）
+  if (isFreshRunning(job)) {
+    return { ok: false, error: "実行中です。しばらく待ってから画面を更新してください。" };
+  }
+
+  // done ジョブの再実行（定点観測）は履歴を残すため、新しいジョブ行を作ってそちらを実行する
+  if (job.status === "done") {
+    const { data: newJob } = await sb
+      .from("collection_jobs")
+      .insert({
+        tenant_id: profile.tenant_id,
+        campaign_id: job.campaign_id,
+        keyword_id: job.keyword_id,
+        status: "pending",
+        source: "ai_web_search",
+      })
+      .select("*")
+      .single();
+    if (!newJob) return { ok: false, error: "再収集ジョブの作成に失敗しました。" };
+    job = newJob;
+  }
+
+  const campaignId: string = job.campaign_id;
+  const keywordId: string = job.keyword_id;
+
+  await sb
+    .from("collection_jobs")
+    .update({ status: "running", started_at: new Date().toISOString(), error_detail: "", finished_at: null })
+    .eq("id", job.id);
+  revalidatePath("/start");
+
+  const fail = async (error: string): Promise<CollectAutoResult> => {
+    await sb
+      .from("collection_jobs")
+      .update({ status: "error", error_detail: error.slice(0, 500), finished_at: new Date().toISOString() })
+      .eq("id", job.id);
+    revalidatePath("/start");
+    return { ok: false, error };
+  };
+
   const { data: camp } = await sb.from("campaigns").select("*").eq("id", campaignId).single();
   const { data: kw } = await sb.from("keywords").select("*").eq("id", keywordId).maybeSingle();
-  if (!camp || !kw) return { ok: false, error: "案件またはキーワードが見つかりません。" };
+  if (!camp || !kw) return fail("案件またはキーワードが見つかりません。");
 
   const productName = camp.product_name || camp.name || "";
 
@@ -340,16 +415,13 @@ export async function collectKeywordAuto(
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (/web_search|tool|not[_\s]?(available|enabled|supported)|permission/i.test(msg)) {
-      return {
-        ok: false,
-        error: "このAPIキーではWeb検索ツールが利用できないようです。/collect の貼り付け方式をご利用ください。",
-      };
+      return fail("このAPIキーではWeb検索ツールが利用できないようです。/collect の貼り付け方式をご利用ください。");
     }
-    return { ok: false, error: `自動検索に失敗しました（${msg.slice(0, 200)}）。/collect の貼り付け方式もご利用いただけます。` };
+    return fail(`自動検索に失敗しました（${msg.slice(0, 200)}）。/collect の貼り付け方式もご利用いただけます。`);
   }
 
   if (!sites.length) {
-    return { ok: false, error: "検索結果からランキング/比較記事を特定できませんでした。/collect の貼り付け方式をお試しください。" };
+    return fail("検索結果からランキング/比較記事を特定できませんでした。/collect の貼り付け方式をお試しください。");
   }
 
   // ===== 永続化（ingestCollection と同じ流れ）=====
@@ -363,7 +435,7 @@ export async function collectKeywordAuto(
     })
     .select("id")
     .single();
-  if (!snap) return { ok: false, error: "スナップショットの作成に失敗しました。" };
+  if (!snap) return fail("スナップショットの作成に失敗しました。");
 
   const { data: aspRows } = await sb
     .from("asp_master")
@@ -464,6 +536,18 @@ export async function collectKeywordAuto(
     }
   }
 
+  await sb
+    .from("collection_jobs")
+    .update({
+      status: "done",
+      found_count: sites.length,
+      ranking_count: rankingArticles,
+      media_new: mediaNew,
+      snapshot_id: snap.id,
+      finished_at: new Date().toISOString(),
+    })
+    .eq("id", job.id);
+
   await audit(
     sb,
     profile.tenant_id,
@@ -476,7 +560,127 @@ export async function collectKeywordAuto(
   );
   revalidatePath("/board");
   revalidatePath("/media");
+  revalidatePath("/start");
   revalidatePath(`/campaigns/${campaignId}`);
 
-  return { ok: true, found: sites.length, ranking_articles: rankingArticles, media_new: mediaNew };
+  return { ok: true, job_id: job.id, found: sites.length, ranking_articles: rankingArticles, media_new: mediaNew };
+}
+
+/* ============ 収集ジョブの再開・再収集・個別作成 ============ */
+
+export type StartJobsResult = { ok: true; jobs: RunnableJob[] } | { ok: false; error: string };
+
+/**
+ * 案件の収集ジョブをまとめて用意する。
+ * mode "resume": 未実行（pending／ジョブなし）・失敗（error）・中断（stale running）だけを対象にする
+ * mode "all"   : 加えて、完了済みキーワードにも新しいジョブを作って全KWを再収集する（定点観測）
+ * 実行そのものはクライアントが collectKeywordAuto を1件ずつ呼ぶ。
+ */
+export async function startCollectionForCampaign(
+  campaignId: string,
+  mode: "resume" | "all" = "resume"
+): Promise<StartJobsResult> {
+  const { sb, profile } = await ctx();
+
+  const { data: kws } = await sb
+    .from("keywords")
+    .select("id, keyword")
+    .eq("campaign_id", campaignId)
+    .order("created_at");
+  if (!kws?.length) return { ok: false, error: "この案件にはキーワードがありません。" };
+
+  const { data: jobs } = await sb
+    .from("collection_jobs")
+    .select("id, keyword_id, status, started_at, created_at")
+    .eq("campaign_id", campaignId)
+    .order("created_at", { ascending: false });
+
+  const latest = new Map<string, { id: string; status: string; started_at: string | null }>();
+  for (const j of jobs ?? []) if (!latest.has(j.keyword_id)) latest.set(j.keyword_id, j);
+
+  const runnable: RunnableJob[] = [];
+  const toCreate: { id: string; keyword: string }[] = [];
+
+  for (const k of kws) {
+    const j = latest.get(k.id);
+    if (!j) {
+      toCreate.push(k);
+      continue;
+    }
+    if (j.status === "pending" || j.status === "error") {
+      runnable.push({ job_id: j.id, keyword_id: k.id, keyword: k.keyword });
+      continue;
+    }
+    if (j.status === "running") {
+      // 5分超の running は中断とみなして引き継ぐ（実行時ガードは collectKeywordAuto 側にもある）
+      if (!isFreshRunning(j)) runnable.push({ job_id: j.id, keyword_id: k.id, keyword: k.keyword });
+      continue;
+    }
+    if (j.status === "done" && mode === "all") toCreate.push(k);
+  }
+
+  if (toCreate.length) {
+    const { data: created } = await sb
+      .from("collection_jobs")
+      .insert(
+        toCreate.map((k) => ({
+          tenant_id: profile.tenant_id,
+          campaign_id: campaignId,
+          keyword_id: k.id,
+          status: "pending",
+          source: "ai_web_search",
+        }))
+      )
+      .select("id, keyword_id");
+    const kwName = new Map(kws.map((k) => [k.id, k.keyword]));
+    for (const j of created ?? [])
+      runnable.push({ job_id: j.id, keyword_id: j.keyword_id, keyword: kwName.get(j.keyword_id) ?? "" });
+  }
+
+  // キーワードの登録順に実行する
+  const order = new Map(kws.map((k, i) => [k.id, i]));
+  runnable.sort((a, b) => (order.get(a.keyword_id) ?? 0) - (order.get(b.keyword_id) ?? 0));
+
+  revalidatePath("/start");
+  return { ok: true, jobs: runnable };
+}
+
+/** キーワード1件に実行可能なジョブを用意する（既存の pending/error/stale running があればそれを返す） */
+export async function createCollectionJob(
+  campaignId: string,
+  keywordId: string
+): Promise<{ ok: true; job: RunnableJob } | { ok: false; error: string }> {
+  const { sb, profile } = await ctx();
+
+  const { data: kw } = await sb.from("keywords").select("id, keyword").eq("id", keywordId).maybeSingle();
+  if (!kw) return { ok: false, error: "キーワードが見つかりません。" };
+
+  const { data: jobs } = await sb
+    .from("collection_jobs")
+    .select("id, status, started_at")
+    .eq("keyword_id", keywordId)
+    .order("created_at", { ascending: false })
+    .limit(1);
+  const j = jobs?.[0];
+  if (j) {
+    if (isFreshRunning(j)) return { ok: false, error: "実行中です。しばらく待ってから画面を更新してください。" };
+    if (j.status === "pending" || j.status === "error" || j.status === "running") {
+      return { ok: true, job: { job_id: j.id, keyword_id: kw.id, keyword: kw.keyword } };
+    }
+  }
+
+  const { data: newJob } = await sb
+    .from("collection_jobs")
+    .insert({
+      tenant_id: profile.tenant_id,
+      campaign_id: campaignId,
+      keyword_id: keywordId,
+      status: "pending",
+      source: "ai_web_search",
+    })
+    .select("id")
+    .single();
+  if (!newJob) return { ok: false, error: "収集ジョブの作成に失敗しました。" };
+  revalidatePath("/start");
+  return { ok: true, job: { job_id: newJob.id, keyword_id: kw.id, keyword: kw.keyword } };
 }
