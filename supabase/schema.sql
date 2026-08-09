@@ -314,3 +314,28 @@ end $$;
 drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users for each row execute function handle_new_user();
+
+-- ============ collection jobs（収集センター：収集ジョブの状態管理） ============
+create table if not exists collection_jobs (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  campaign_id uuid not null references campaigns(id) on delete cascade,
+  keyword_id uuid not null references keywords(id) on delete cascade,
+  status text not null default 'pending', -- pending | running | done | error
+  source text not null default 'ai_web_search',
+  found_count int not null default 0,
+  ranking_count int not null default 0,
+  media_new int not null default 0,
+  error_detail text not null default '',
+  snapshot_id uuid references serp_snapshots(id) on delete set null,
+  started_at timestamptz,
+  finished_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_cjobs_tenant_created on collection_jobs(tenant_id, created_at desc);
+create index if not exists idx_cjobs_keyword on collection_jobs(keyword_id);
+
+alter table collection_jobs enable row level security;
+drop policy if exists collection_jobs_rw on collection_jobs;
+create policy collection_jobs_rw on collection_jobs for all to authenticated
+  using (tenant_id = current_tenant_id()) with check (tenant_id = current_tenant_id());
