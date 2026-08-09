@@ -16,7 +16,7 @@ const NAV_SECTIONS: { label: string; items: NavItem[] }[] = [
   {
     label: "① 集める",
     items: [
-      { href: "/start", label: "かんたん開始" },
+      { href: "/start", label: "収集センター" },
       { href: "/collect", label: "収集" },
       { href: "/board", label: "陣取りボード" },
     ],
