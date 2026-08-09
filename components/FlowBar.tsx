@@ -28,7 +28,7 @@ const STEPS: Step[] = [
   {
     label: "① 集める",
     sub: "陣取りボード",
-    href: "/board",
+    href: "/start",
     paths: ["/start", "/collect", "/board"],
     count: (c) => c.collect,
   },
