@@ -1,27 +1,26 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
 import { Card, btnAccent, btnGhost, inputCls, labelCls } from "@/components/ui";
 import {
   proposeCampaignFromInput,
   createCampaignFromDraft,
-  collectKeywordAuto,
   type CampaignDraft,
+  type RunnableJob,
 } from "@/app/start-actions";
 
 type KwRow = { keyword: string; priority: number; checked: boolean };
-type Progress = {
-  id: string;
-  keyword: string;
-  state: "pending" | "running" | "done" | "error";
-  found?: number;
-  ranking?: number;
-  error?: string;
-};
 
-export default function StartWizard() {
-  const [step, setStep] = useState<1 | 2 | 3>(1);
+/**
+ * かんたん開始ウィザード（Step1: 入力 → Step2: 確認・作成）。
+ * 案件と収集ジョブを作成したら onCreated に引き渡す。実行と進捗表示は収集センター（一覧側）が担当する。
+ */
+export default function StartWizard({
+  onCreated,
+}: {
+  onCreated: (campaignId: string, jobs: RunnableJob[]) => void;
+}) {
+  const [step, setStep] = useState<1 | 2>(1);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -33,11 +32,6 @@ export default function StartWizard() {
   // Step2
   const [draft, setDraft] = useState<CampaignDraft | null>(null);
   const [kws, setKws] = useState<KwRow[]>([]);
-
-  // Step3
-  const [campaignId, setCampaignId] = useState<string | null>(null);
-  const [progress, setProgress] = useState<Progress[]>([]);
-  const [finished, setFinished] = useState(false);
 
   const analyze = async () => {
     setError(null);
@@ -66,7 +60,7 @@ export default function StartWizard() {
     }
   };
 
-  const createAndCollect = async () => {
+  const create = async () => {
     if (!draft) return;
     setError(null);
     const selected = kws.filter((k) => k.checked && k.keyword.trim());
@@ -89,40 +83,13 @@ export default function StartWizard() {
         setError(res.error);
         return;
       }
-      setCampaignId(res.campaign_id);
-      const prog: Progress[] = res.keywords.map((k) => ({
-        id: k.id,
-        keyword: k.keyword,
-        state: "pending",
-      }));
-      setProgress(prog);
-      setStep(3);
-
-      // 1キーワードずつ順番に自動収集（各呼び出しは60秒以内に完了）
-      for (const p of prog) {
-        setProgress((prev) => prev.map((x) => (x.id === p.id ? { ...x, state: "running" } : x)));
-        try {
-          const r = await collectKeywordAuto(res.campaign_id, p.id);
-          setProgress((prev) =>
-            prev.map((x) =>
-              x.id === p.id
-                ? r.ok
-                  ? { ...x, state: "done", found: r.found, ranking: r.ranking_articles }
-                  : { ...x, state: "error", error: r.error }
-                : x
-            )
-          );
-        } catch (e) {
-          setProgress((prev) =>
-            prev.map((x) =>
-              x.id === p.id
-                ? { ...x, state: "error", error: e instanceof Error ? e.message : "収集に失敗しました" }
-                : x
-            )
-          );
-        }
-      }
-      setFinished(true);
+      // リセットして一覧側へ引き渡し（自動収集は一覧の行で進捗表示される）
+      setStep(1);
+      setInputUrl("");
+      setInputText("");
+      setDraft(null);
+      setKws([]);
+      onCreated(res.campaign_id, res.jobs);
     } finally {
       setBusy(false);
     }
@@ -132,13 +99,12 @@ export default function StartWizard() {
     setDraft((d) => (d ? { ...d, [field]: value } : d));
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* ステップ表示 */}
       <ol className="flex flex-wrap gap-2 text-xs">
         {[
           [1, "商品を教えてください"],
           [2, "案件とキーワードの確認"],
-          [3, "自動収集"],
         ].map(([n, label]) => (
           <li
             key={n}
@@ -266,7 +232,7 @@ export default function StartWizard() {
             </div>
 
             <div className="mt-5 flex flex-wrap items-center gap-3">
-              <button type="button" onClick={createAndCollect} disabled={busy} className={btnAccent}>
+              <button type="button" onClick={create} disabled={busy} className={btnAccent}>
                 {busy && (
                   <span className="mr-2 inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-current/30 border-t-current" />
                 )}
@@ -281,54 +247,6 @@ export default function StartWizard() {
             </div>
           </Card>
         </>
-      )}
-
-      {step === 3 && (
-        <Card
-          title="自動収集"
-          desc="キーワードごとに、AIがWebを検索してランキング／比較／おすすめ記事を特定し、陣取り表に反映します。"
-        >
-          <ul className="space-y-2">
-            {progress.map((p) => (
-              <li key={p.id} className="flex items-start gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm">
-                <span className="w-6 text-center">
-                  {p.state === "pending" && "・"}
-                  {p.state === "running" && "⏳"}
-                  {p.state === "done" && "✅"}
-                  {p.state === "error" && "❌"}
-                </span>
-                <div className="min-w-0">
-                  <div className="font-medium text-slate-800">{p.keyword}</div>
-                  <div className="text-[11px] text-slate-500">
-                    {p.state === "pending" && "待機中"}
-                    {p.state === "running" && "AIがWeb検索中…（数十秒かかります）"}
-                    {p.state === "done" && `取得 ${p.found ?? 0} 件 ／ ランキング・比較記事 ${p.ranking ?? 0} 件`}
-                    {p.state === "error" && (p.error || "失敗しました")}
-                  </div>
-                </div>
-              </li>
-            ))}
-          </ul>
-
-          {finished && (
-            <div className="mt-5 space-y-3">
-              <p className="text-sm font-semibold text-emerald-700">自動収集が完了しました。</p>
-              <div className="flex flex-wrap gap-2">
-                <Link href={campaignId ? `/board?campaign=${campaignId}` : "/board"} className={btnAccent}>
-                  陣取りボードを見る
-                </Link>
-                <Link href="/media" className={btnGhost}>
-                  メディア台帳
-                </Link>
-              </div>
-            </div>
-          )}
-
-          <p className="mt-4 text-[11px] leading-relaxed text-slate-400">
-            自動検索にはAPI利用料がかかります（1キーワードあたり数円〜十数円）。
-            結果は「収集済」として陣取り表に載ります。打診対象の確定・送信の承認は人が行います（自動送信はしません）。
-          </p>
-        </Card>
       )}
     </div>
   );
