@@ -48,6 +48,30 @@ async function audit(
   });
 }
 
+/* ============ 案件情報の更新（案件詳細ハブの「案件情報・KW」タブ） ============ */
+
+export async function updateCampaignInfo(formData: FormData) {
+  const { sb, profile } = await ctx();
+  const id = String(formData.get("id"));
+  if (!id) return;
+  await sb
+    .from("campaigns")
+    .update({
+      name: String(formData.get("name") || "無題の案件"),
+      product_name: String(formData.get("product_name") || ""),
+      lp_url: safeUrl(String(formData.get("lp_url") || "")),
+      unit_price: String(formData.get("unit_price") || ""),
+      conversion_point: String(formData.get("conversion_point") || ""),
+      approval_terms: String(formData.get("approval_terms") || ""),
+      selling_points: String(formData.get("selling_points") || ""),
+    })
+    .eq("id", id);
+  await audit(sb, profile.tenant_id, profile.id, profile.full_name, "campaign", id, "updated");
+  revalidatePath(`/campaigns/${id}`);
+  revalidatePath("/campaigns");
+  revalidatePath("/start");
+}
+
 /* ============ Step 1: URL/テキスト → 案件ドラフト提案 ============ */
 
 export type CampaignDraft = {
