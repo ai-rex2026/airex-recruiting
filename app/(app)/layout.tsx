@@ -11,21 +11,19 @@ export const dynamic = "force-dynamic";
 
 type NavItem = { href: string; label: string; key?: string };
 
-// サイドバーは横断的な作業キューと台帳だけに絞る。
-// 案件ごとの画面（陣取りボード・打診・返信・掲載など）は 案件詳細ハブ /campaigns/[id] のタブから辿る。
+// サイドバーは横断的な作業キューと台帳だけに絞る（4項目＋管理）。
+// 例外対応・送信ログは 承認キュー(/queue) のタブ、案件ごとの画面は 案件詳細ハブ /campaigns/[id] のタブから辿る。
 const NAV_SECTIONS: { label?: string; items: NavItem[] }[] = [
   {
     items: [
       { href: "/start", label: "案件・収集" },
       { href: "/queue", label: "承認キュー", key: "queue" },
-      { href: "/exceptions", label: "例外対応", key: "exceptions" },
       { href: "/media", label: "メディア台帳" },
     ],
   },
   {
     label: "管理",
     items: [
-      { href: "/dashboard", label: "ダッシュボード" },
       { href: "/templates", label: "文面テンプレ" },
       { href: "/settings", label: "設定" },
       { href: "/audit", label: "監査ログ" },
@@ -79,11 +77,18 @@ export default async function AppLayout({ children }: { children: React.ReactNod
                   className="flex items-center justify-between rounded-lg px-3 py-2 text-[13px] text-slate-700 transition hover:bg-slate-100"
                 >
                   <span>{n.label}</span>
-                  {n.key && counts[n.key] > 0 && (
-                    <span className="rounded-full bg-[#C1553B] px-1.5 py-0.5 text-[10px] font-bold text-white">
-                      {counts[n.key]}
-                    </span>
-                  )}
+                  <span className="flex items-center gap-1">
+                    {n.key && counts[n.key] > 0 && (
+                      <span className="rounded-full bg-[#C1553B] px-1.5 py-0.5 text-[10px] font-bold text-white">
+                        {counts[n.key]}
+                      </span>
+                    )}
+                    {n.href === "/queue" && counts.exceptions > 0 && (
+                      <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-700">
+                        例外{counts.exceptions}
+                      </span>
+                    )}
+                  </span>
                 </Link>
               ))}
             </div>
