@@ -72,6 +72,66 @@ export async function updateCampaignInfo(formData: FormData) {
   revalidatePath("/start");
 }
 
+/* ============ 陣取りボードから打診対象を追加 ============ */
+
+/**
+ * 検索結果（serp_entries）由来のメディアを、campaign×media の打診対象として追加する。
+ * ingestCollection と同じ判定（kind: own_listed→replace / status: 営業お断りなら excluded、それ以外 collected）。
+ */
+export async function addOutreachTarget(formData: FormData) {
+  const { sb, profile } = await ctx();
+  const campaignId = String(formData.get("campaign_id") || "");
+  const mediaId = String(formData.get("media_id") || "");
+  if (!campaignId || !mediaId) return;
+
+  // 既存があれば触らない（campaign×media は一意）
+  const { data: exist } = await sb
+    .from("outreach_targets")
+    .select("id")
+    .eq("campaign_id", campaignId)
+    .eq("media_id", mediaId)
+    .maybeSingle();
+  if (exist) return;
+
+  const { data: media } = await sb
+    .from("media")
+    .select("no_solicitation, domain")
+    .eq("id", mediaId)
+    .maybeSingle();
+  if (!media) return;
+
+  const ownListed = String(formData.get("own_listed")) === "true";
+  const rank = Number(formData.get("rank"));
+
+  const { data: created } = await sb
+    .from("outreach_targets")
+    .insert({
+      tenant_id: profile.tenant_id,
+      campaign_id: campaignId,
+      media_id: mediaId,
+      kind: ownListed ? "replace" : "new",
+      status: media.no_solicitation ? "excluded" : "collected",
+      status_reason: media.no_solicitation ? "営業お断り（台帳フラグ）" : "",
+      article_url: safeUrl(String(formData.get("article_url") || "")),
+      rank: Number.isFinite(rank) && rank > 0 ? rank : null,
+    })
+    .select("id")
+    .single();
+
+  await audit(
+    sb,
+    profile.tenant_id,
+    profile.id,
+    profile.full_name,
+    "outreach_target",
+    created?.id ?? null,
+    "created_from_board",
+    `media:${media.domain}`
+  );
+  revalidatePath("/board");
+  revalidatePath(`/campaigns/${campaignId}`);
+}
+
 /* ============ Step 1: URL/テキスト → 案件ドラフト提案 ============ */
 
 export type CampaignDraft = {
