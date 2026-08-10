@@ -92,16 +92,16 @@ export default function FlowBar({ counts }: { counts: FlowCounts }) {
                     {n}
                   </span>
                 )}
-                {s.href === "/queue" && counts.exceptions > 0 && (
-                  <span
-                    className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
-                      active ? "bg-red-400/40 text-white" : "bg-red-100 text-red-700"
-                    }`}
-                  >
-                    +例外{counts.exceptions}
-                  </span>
-                )}
               </Link>
+              {s.href === "/queue" && counts.exceptions > 0 && (
+                <Link
+                  href="/queue?tab=exceptions"
+                  title="例外対応"
+                  className="rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-700 hover:bg-red-200"
+                >
+                  +例外{counts.exceptions}
+                </Link>
+              )}
             </li>
           );
         })}
