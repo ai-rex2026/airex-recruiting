@@ -3,6 +3,7 @@ import { getSessionProfile } from "@/lib/supabase/server";
 import { setTargetStatus, generateDrafts } from "@/app/actions";
 import { addOutreachTarget } from "@/app/start-actions";
 import BulkTable, { type Row } from "@/components/BulkTable";
+import EnrichButton from "@/components/EnrichButton";
 import { Card, Empty, Badge, btnSmall } from "@/components/ui";
 import { OUTREACH_STATUS, statusTone } from "@/lib/domain";
 import SubmitButton from "@/components/SubmitButton";
@@ -267,9 +268,12 @@ export default async function BoardView({ campaignId }: { campaignId: string }) 
                 : "未収集"
             }
             action={
-              <Link href={`/campaigns/${campaignId}?tab=collect`} className={btnSmall}>
-                再収集
-              </Link>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {snap && <EnrichButton snapshotId={snap.id} />}
+                <Link href={`/campaigns/${campaignId}?tab=collect`} className={btnSmall}>
+                  再収集
+                </Link>
+              </div>
             }
           >
             {!snap ? (
