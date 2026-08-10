@@ -26,21 +26,53 @@ function fmt(dt: string | null | undefined): string {
   return dt ? new Date(dt).toLocaleString("ja-JP") : "—";
 }
 
-/** 記事内の掲載枠（上位サービス）をコンパクトに表示。自社はブランド色で強調 */
+/**
+ * 記事内の掲載枠。自社はブランド色で強調。
+ * - 順位付きランキング記事（position が1つでもある）→ 上位5枠をチップ表示（順位なし分は「+他n」に含める）
+ * - 順位のない掲載リスト → 「掲載リスト（順位なし）」ラベル＋全サービス名のカンマ列挙
+ */
 function ListingInline({ listings }: { listings: Listing[] }) {
   if (!listings.length) return <span className="text-[11px] text-slate-400">—</span>;
-  const shown = listings.slice(0, 8);
-  return (
-    <span className="text-[11px] leading-relaxed text-slate-600">
-      {shown.map((l, i) => (
-        <span key={i}>
-          {i > 0 && <span className="text-slate-300"> ｜ </span>}
-          <span className={l.is_own ? "font-bold text-[#C1553B]" : ""}>
-            {l.position ?? "?"} {l.service_name}
+
+  const ranked = listings.some((l) => l.position != null);
+
+  if (!ranked) {
+    return (
+      <span className="text-[11px] leading-relaxed text-slate-600">
+        <span className="mr-1.5 inline-block rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500">
+          掲載リスト（順位なし）
+        </span>
+        {listings.map((l, i) => (
+          <span key={i}>
+            {i > 0 && "、"}
+            <span className={l.is_own ? "font-bold text-[#C1553B]" : ""}>{l.service_name}</span>
           </span>
+        ))}
+      </span>
+    );
+  }
+
+  const chips = [...listings]
+    .filter((l) => l.position != null)
+    .sort((a, b) => (a.position as number) - (b.position as number))
+    .slice(0, 5);
+  const rest = listings.length - chips.length;
+
+  return (
+    <span className="flex flex-wrap items-center gap-1">
+      {chips.map((l, i) => (
+        <span
+          key={i}
+          className={`inline-flex items-center whitespace-nowrap rounded-md border px-1.5 py-0.5 text-[10px] font-semibold ${
+            l.is_own
+              ? "border-[#C1553B] bg-[#C1553B] text-white"
+              : "border-slate-200 bg-slate-50 text-slate-700"
+          }`}
+        >
+          {l.position}位 {l.service_name}
         </span>
       ))}
-      {listings.length > 8 && <span className="text-slate-400">（他{listings.length - 8}）</span>}
+      {rest > 0 && <span className="text-[10px] text-slate-400">+他{rest}</span>}
     </span>
   );
 }
