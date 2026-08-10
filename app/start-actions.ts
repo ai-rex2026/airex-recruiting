@@ -381,8 +381,8 @@ export type CollectAutoResult =
   | { ok: true; job_id: string; snapshot_id: string; found: number; ranking_articles: number; media_new: number }
   | { ok: false; error: string };
 
-/** running のまま5分を超えたジョブは中断とみなして引き継ぐ */
-const STALE_RUNNING_MS = 5 * 60 * 1000;
+/** running のまま3分を超えたジョブは中断とみなして引き継ぐ */
+const STALE_RUNNING_MS = 3 * 60 * 1000;
 
 function isFreshRunning(job: { status: string; started_at: string | null }): boolean {
   return (
@@ -419,13 +419,13 @@ export async function collectKeywordAuto(jobId: string): Promise<CollectAutoResu
   const { sb, profile } = await ctx();
 
   if (!hasAnthropic()) {
-    return { ok: false, error: "ANTHROPIC_API_KEY が未設定です。/collect の貼り付け方式をご利用ください。" };
+    return { ok: false, error: "ANTHROPIC_API_KEY が未設定です。案件情報・KWタブの貼り付け収集をご利用ください。" };
   }
 
   let { data: job } = await sb.from("collection_jobs").select("*").eq("id", jobId).maybeSingle();
   if (!job) return { ok: false, error: "収集ジョブが見つかりません。" };
 
-  // 二重実行ガード：running かつ開始から5分以内なら実行しない（5分超は中断とみなして引き継ぐ）
+  // 二重実行ガード：running かつ開始から3分以内なら実行しない（3分超は中断とみなして引き継ぐ）
   if (isFreshRunning(job)) {
     return { ok: false, error: "実行中です。しばらく待ってから画面を更新してください。" };
   }
@@ -488,21 +488,36 @@ export async function collectKeywordAuto(jobId: string): Promise<CollectAutoResu
   let sites: FoundSite[] = [];
   try {
     const anthropic = anthropicClient();
-    const res = await anthropic.messages.create({
-      model: MODEL,
-      max_tokens: 4000,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      tools: [
-        {
-          type: "web_search_20250305",
-          name: "web_search",
-          max_uses: 4,
-          // サーバーのリージョンに関わらず、日本ロケーションとして検索を安定させる
-          user_location: { type: "approximate", country: "JP", city: "Tokyo", timezone: "Asia/Tokyo" },
-        } as any,
-      ],
-      messages: [{ role: "user", content: prompt }],
+    // ウォッチドッグ：Web検索が長引いてもアクションが黙って死なないよう、約120秒で打ち切って
+    // ジョブに error を記録する（Vercel の maxDuration=180 秒より手前で確実に着地させる）。
+    const WATCHDOG_MS = 120 * 1000;
+    let watchdogTimer: ReturnType<typeof setTimeout> | undefined;
+    const watchdog = new Promise<never>((_, reject) => {
+      watchdogTimer = setTimeout(() => reject(new Error("COLLECT_WATCHDOG_TIMEOUT")), WATCHDOG_MS);
     });
+    let res;
+    try {
+      res = await Promise.race([
+        anthropic.messages.create({
+          model: MODEL,
+          max_tokens: 4000,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          tools: [
+            {
+              type: "web_search_20250305",
+              name: "web_search",
+              max_uses: 3,
+              // サーバーのリージョンに関わらず、日本ロケーションとして検索を安定させる
+              user_location: { type: "approximate", country: "JP", city: "Tokyo", timezone: "Asia/Tokyo" },
+            } as any,
+          ],
+          messages: [{ role: "user", content: prompt }],
+        }),
+        watchdog,
+      ]);
+    } finally {
+      clearTimeout(watchdogTimer);
+    }
     const text = res.content
       .map((b) => (b.type === "text" ? b.text : ""))
       .join("\n");
@@ -510,14 +525,17 @@ export async function collectKeywordAuto(jobId: string): Promise<CollectAutoResu
     sites = (parsed?.sites ?? []).slice(0, 12);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    if (/web_search|tool|not[_\s]?(available|enabled|supported)|permission/i.test(msg)) {
-      return fail("このAPIキーではWeb検索ツールが利用できないようです。/collect の貼り付け方式をご利用ください。");
+    if (msg.includes("COLLECT_WATCHDOG_TIMEOUT")) {
+      return fail("検索がタイムアウトしました。再収集してください。");
     }
-    return fail(`自動検索に失敗しました（${msg.slice(0, 200)}）。/collect の貼り付け方式もご利用いただけます。`);
+    if (/web_search|tool|not[_\s]?(available|enabled|supported)|permission/i.test(msg)) {
+      return fail("このAPIキーではWeb検索ツールが利用できないようです。案件情報・KWタブの貼り付け収集をご利用ください。");
+    }
+    return fail(`自動検索に失敗しました（${msg.slice(0, 200)}）。再収集で再試行するか、案件情報・KWタブの貼り付け収集をお試しください。`);
   }
 
   if (!sites.length) {
-    return fail("検索結果からランキング/比較記事を特定できませんでした。/collect の貼り付け方式をお試しください。");
+    return fail("検索結果からランキング/比較記事を特定できませんでした。再収集で再試行するか、案件情報・KWタブの貼り付け収集をお試しください。");
   }
 
   // ===== 永続化（ingestCollection と同じ流れ）=====
@@ -708,7 +726,7 @@ export async function startCollectionForCampaign(
       continue;
     }
     if (j.status === "running") {
-      // 5分超の running は中断とみなして引き継ぐ（実行時ガードは collectKeywordAuto 側にもある）
+      // 3分超の running は中断とみなして引き継ぐ（実行時ガードは collectKeywordAuto 側にもある）
       if (!isFreshRunning(j)) runnable.push({ job_id: j.id, keyword_id: k.id, keyword: k.keyword });
       continue;
     }
