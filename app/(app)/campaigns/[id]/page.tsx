@@ -5,8 +5,7 @@ import { addKeywords, deleteKeyword, suggestKeywords } from "@/app/actions";
 import { updateCampaignInfo } from "@/app/start-actions";
 import BoardView from "@/components/BoardView";
 import CampaignJobs, { type CampaignGroup, type JobInfo } from "@/app/(app)/start/CampaignJobs";
-import { Card, Empty, Badge, btnGhost, btnSmall, inputCls, labelCls } from "@/components/ui";
-import { OUTREACH_STATUS, SEND_RESULT, REPLY_CLASS, statusTone } from "@/lib/domain";
+import { Card, Empty, Badge, btnSmall, inputCls, labelCls } from "@/components/ui";
 import SubmitButton from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
@@ -16,7 +15,6 @@ export const maxDuration = 60;
 const TABS = [
   { id: "collect", label: "収集状況" },
   { id: "board", label: "陣取りボード" },
-  { id: "outreach", label: "打診・返信・掲載" },
   { id: "info", label: "案件情報・KW" },
 ] as const;
 
@@ -53,13 +51,12 @@ export default async function CampaignDetail({
     .maybeSingle();
   if (!c) notFound();
 
-  const [{ data: kws }, { data: targets }, { data: jobs }] = await Promise.all([
+  const [{ data: kws }, { data: jobs }] = await Promise.all([
     sb
       .from("keywords")
       .select("*, snapshots:serp_snapshots(id, collected_at)")
       .eq("campaign_id", id)
       .order("created_at"),
-    sb.from("outreach_targets").select("status").eq("campaign_id", id),
     sb
       .from("collection_jobs")
       .select("id, keyword_id, status, found_count, ranking_count, error_detail, started_at, finished_at, created_at")
@@ -68,8 +65,6 @@ export default async function CampaignDetail({
   ]);
 
   const clientName = (c.client as unknown as { name: string } | null)?.name ?? "";
-  const cnt = (statuses: string[]) => (targets ?? []).filter((t) => statuses.includes(t.status)).length;
-  const placedN = cnt(["placed", "reported"]);
 
   // 収集状況タブ用のグループ（KW×最新ジョブ）
   const latestByKw = new Map<string, JobRow>();
@@ -118,9 +113,6 @@ export default async function CampaignDetail({
         </div>
         <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-600">
           <span className="rounded-lg bg-slate-100 px-2 py-1">KW {(kws ?? []).length}件</span>
-          <span className="rounded-lg bg-slate-100 px-2 py-1">打診 {(targets ?? []).length}件</span>
-          <span className="rounded-lg bg-slate-100 px-2 py-1">承認待ち {cnt(["awaiting_approval"])}件</span>
-          <span className="rounded-lg bg-slate-100 px-2 py-1">掲載 {placedN}件</span>
           <span className="rounded-lg bg-slate-100 px-2 py-1">
             最終収集 {group.last_collected ? new Date(group.last_collected).toLocaleString("ja-JP") : "—"}
           </span>
@@ -158,8 +150,6 @@ export default async function CampaignDetail({
       )}
 
       {tab === "board" && <BoardView campaignId={id} />}
-
-      {tab === "outreach" && <OutreachTab campaignId={id} />}
 
       {tab === "info" && (
         <div className="space-y-6">
@@ -266,119 +256,6 @@ export default async function CampaignDetail({
           </Card>
         </div>
       )}
-    </div>
-  );
-}
-
-/** 打診・返信・掲載タブ：この案件の outreach_targets を横断ビューで表示する */
-async function OutreachTab({ campaignId }: { campaignId: string }) {
-  const { sb } = await getSessionProfile();
-  const { data: otargets } = await sb
-    .from("outreach_targets")
-    .select(
-      "*, media:media(id, name, domain), attempts:send_attempts(result, sent_at, queued_at), replies:replies(ai_class, final_class, received_at), placements:placements(id, article_url, position_in_article, started_on)"
-    )
-    .eq("campaign_id", campaignId)
-    .order("rank", { ascending: true, nullsFirst: false });
-
-  const rows = otargets ?? [];
-
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap gap-2">
-        <Link href="/queue" className={btnGhost}>
-          承認キューで処理する
-        </Link>
-        <Link href="/replies" className={btnGhost}>
-          返信・交渉
-        </Link>
-        <Link href="/placements" className={btnGhost}>
-          掲載・報告
-        </Link>
-        <Link href="/outbox" className={btnGhost}>
-          送信ログ
-        </Link>
-      </div>
-
-      <Card title={`打診一覧（${rows.length}件）`} desc="この案件の打診・返信・掲載の現在地。個別の操作は各画面で行います">
-        {rows.length === 0 ? (
-          <Empty>まだ打診がありません。収集を実行して陣取りボードで対象を確定してください。</Empty>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="tbl w-full text-sm">
-              <thead>
-                <tr className="text-left text-[11px] text-slate-500">
-                  <th className="pb-2">メディア</th>
-                  <th className="pb-2">打診種別</th>
-                  <th className="pb-2">状態</th>
-                  <th className="pb-2">最終送信</th>
-                  <th className="pb-2">返信</th>
-                  <th className="pb-2">掲載</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((t) => {
-                  const m = t.media as unknown as { id: string; name: string; domain: string } | null;
-                  const atts = ((t.attempts as unknown as { result: string; sent_at: string | null; queued_at: string }[]) ?? [])
-                    .slice()
-                    .sort((a, b) => ((a.sent_at ?? a.queued_at) < (b.sent_at ?? b.queued_at) ? 1 : -1));
-                  const att = atts[0];
-                  const reps = ((t.replies as unknown as { ai_class: string; final_class: string; received_at: string }[]) ?? [])
-                    .slice()
-                    .sort((a, b) => (a.received_at < b.received_at ? 1 : -1));
-                  const rep = reps[0];
-                  const repClass = rep?.final_class || rep?.ai_class || "";
-                  const pls = (t.placements as unknown as { article_url: string; position_in_article: number | null; started_on: string | null }[]) ?? [];
-                  const pl = pls[0];
-                  return (
-                    <tr key={t.id}>
-                      <td className="py-2">
-                        <Link href={`/media/${m?.id}`} className="font-medium hover:underline">
-                          {m?.name || m?.domain}
-                        </Link>
-                        <div className="text-[11px] text-slate-400">{m?.domain}</div>
-                      </td>
-                      <td className="py-2 text-xs">{t.kind === "replace" ? "リプレイス" : "新規"}</td>
-                      <td className="py-2">
-                        <Badge tone={statusTone(t.status)}>
-                          {OUTREACH_STATUS[t.status as keyof typeof OUTREACH_STATUS] ?? t.status}
-                        </Badge>
-                      </td>
-                      <td className="py-2 text-[11px] text-slate-600">
-                        {att
-                          ? `${new Date(att.sent_at ?? att.queued_at).toLocaleDateString("ja-JP")} ${
-                              SEND_RESULT[att.result as keyof typeof SEND_RESULT] ?? att.result
-                            }`
-                          : "—"}
-                      </td>
-                      <td className="py-2 text-[11px] text-slate-600">
-                        {rep
-                          ? `${REPLY_CLASS[repClass as keyof typeof REPLY_CLASS] ?? "未分類"}（${reps.length}件）`
-                          : "—"}
-                      </td>
-                      <td className="py-2 text-[11px] text-slate-600">
-                        {pl ? (
-                          <span>
-                            {pl.position_in_article ? `${pl.position_in_article}位 ` : ""}
-                            {pl.started_on ?? ""}
-                            {pl.article_url && (
-                              <a href={pl.article_url} target="_blank" rel="noreferrer" className="ml-1 text-sky-700 underline">
-                                記事
-                              </a>
-                            )}
-                          </span>
-                        ) : (
-                          "—"
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
     </div>
   );
 }
