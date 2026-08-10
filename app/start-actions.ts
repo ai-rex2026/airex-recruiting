@@ -492,7 +492,15 @@ export async function collectKeywordAuto(jobId: string): Promise<CollectAutoResu
       model: MODEL,
       max_tokens: 4000,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 4 } as any],
+      tools: [
+        {
+          type: "web_search_20250305",
+          name: "web_search",
+          max_uses: 4,
+          // サーバーのリージョンに関わらず、日本ロケーションとして検索を安定させる
+          user_location: { type: "approximate", country: "JP", city: "Tokyo", timezone: "Asia/Tokyo" },
+        } as any,
+      ],
       messages: [{ role: "user", content: prompt }],
     });
     const text = res.content
