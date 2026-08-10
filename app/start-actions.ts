@@ -476,7 +476,11 @@ export async function collectKeywordAuto(jobId: string): Promise<CollectAutoResu
 - 除外: サービス公式サイト・公式LP、ECモールの商品ページ、単なるニュース記事、SNS
 - 最大12件
 - own_listed = 対象商材「${productName}」（訴求: ${camp.selling_points || "—"}）がその記事内に掲載されているか
-- listed_services = 記事内で上位に掲載されているサービス名（分かる範囲で最大10件）
+- listed_services = 記事内に掲載されている商品・サービス名。次のルールに厳密に従うこと:
+  - 記事に明確な順位付きランキングがある場合: position を 1..N として上位から最大10件
+  - 順位のないリスト・言及のみの場合: 特定できる商品・サービス名をすべて（最大15件）、position はすべて null
+  - 商品・サービス名を特定できない場合: 空配列 [] を返す
+  - 「情報不足のため特定不可」「不明」などのプレースホルダ文字列を name に入れてはならない（実在の商品・サービス名のみ）
 
 検索・確認が終わったら、最後に STRICT JSON のみを出力してください（前置き・コードフェンス不要）:
 {"sites":[{"rank":1,"title":"...","url":"https://...","site_name":"...","is_ranking_article":true,"reason":"判定理由を20字程度で","listed_services":[{"position":1,"name":"..."}],"own_listed":false,"own_position":null}]}`;
@@ -585,7 +589,7 @@ export async function collectKeywordAuto(jobId: string): Promise<CollectAutoResu
 
     if (entry && r.listed_services?.length) {
       await sb.from("article_listings").insert(
-        r.listed_services.slice(0, 10).map((c) => ({
+        r.listed_services.slice(0, 15).map((c) => ({
           tenant_id: profile.tenant_id,
           serp_entry_id: entry.id,
           position: c.position ?? null,
