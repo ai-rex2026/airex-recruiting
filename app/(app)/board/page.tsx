@@ -4,6 +4,8 @@ import BoardView from "@/components/BoardView";
 import { Empty, btnSmall } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
+// 「記事本文から読み直す」のサーバーアクションはこのセグメントで実行される
+export const maxDuration = 60;
 
 export default async function BoardPage({
   searchParams,
