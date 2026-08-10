@@ -8,6 +8,8 @@ import {
   collectKeywordAuto,
   startCollectionForCampaign,
   createCollectionJob,
+  enrichArticleListings,
+  listEnrichableEntries,
   type RunnableJob,
 } from "@/app/start-actions";
 
@@ -31,12 +33,20 @@ export type CampaignGroup = {
   kws: KwRow[];
 };
 
-type Overlay = { state: "queued" | "running" | "done" | "error"; found?: number; ranking?: number; error?: string };
+type Overlay = {
+  state: "queued" | "running" | "enriching" | "done" | "error";
+  found?: number;
+  ranking?: number;
+  error?: string;
+  enrichDone?: number;
+  enrichTotal?: number;
+  enrichOk?: number;
+};
 
 const STALE_MS = 5 * 60 * 1000;
 
 function effectiveStatus(row: KwRow, ov: Overlay | undefined) {
-  if (ov) return ov.state === "queued" ? "pending" : ov.state;
+  if (ov) return ov.state === "queued" ? "pending" : ov.state === "enriching" ? "running" : ov.state;
   const j = row.job;
   if (!j) return "none";
   if (j.status === "running") {
@@ -96,8 +106,43 @@ export default function CampaignJobs({
         setOv(j.keyword_id, { state: "running" });
         try {
           const r = await collectKeywordAuto(j.job_id);
-          if (r.ok) setOv(j.keyword_id, { state: "done", found: r.found, ranking: r.ranking_articles });
-          else setOv(j.keyword_id, { state: "error", error: r.error });
+          if (!r.ok) {
+            setOv(j.keyword_id, { state: "error", error: r.error });
+            continue;
+          }
+          // 第2段階：記事本文を1件ずつ読み取り、掲載枠を本文から抽出する
+          let enrichOk = 0;
+          let enrichTotal = 0;
+          try {
+            const le = await listEnrichableEntries(r.snapshot_id);
+            if (le.ok && le.entries.length) {
+              enrichTotal = le.entries.length;
+              for (let i = 0; i < le.entries.length; i++) {
+                setOv(j.keyword_id, {
+                  state: "enriching",
+                  found: r.found,
+                  ranking: r.ranking_articles,
+                  enrichDone: i,
+                  enrichTotal,
+                });
+                try {
+                  const er = await enrichArticleListings(le.entries[i].entry_id);
+                  if (er.ok) enrichOk++;
+                } catch {
+                  // 個別記事の失敗はジョブ全体を失敗にしない
+                }
+              }
+            }
+          } catch {
+            // 本文読取の準備に失敗しても収集自体は完了扱い
+          }
+          setOv(j.keyword_id, {
+            state: "done",
+            found: r.found,
+            ranking: r.ranking_articles,
+            enrichOk,
+            enrichTotal,
+          });
         } catch (e) {
           setOv(j.keyword_id, { state: "error", error: e instanceof Error ? e.message : "収集に失敗しました" });
         }
@@ -245,12 +290,15 @@ export default function CampaignJobs({
                   {s === "running" && (
                     <span className="text-xs text-sky-700">
                       <span className="mr-1 inline-block h-3 w-3 animate-spin rounded-full border-2 border-sky-300 border-t-sky-700 align-[-2px]" />
-                      ⏳実行中
+                      {ov?.state === "enriching"
+                        ? `⏳ 記事本文を読取中 ${(ov.enrichDone ?? 0) + 1}/${ov.enrichTotal ?? 0}`
+                        : "⏳実行中"}
                     </span>
                   )}
                   {s === "done" && (
                     <span className="text-xs text-emerald-700">
                       ✅完了 {found}件（うちランキング{ranking}件）
+                      {ov?.enrichTotal ? `／本文読取: ${ov.enrichOk ?? 0}/${ov.enrichTotal}件` : ""}
                     </span>
                   )}
                   {s === "error" && (
