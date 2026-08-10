@@ -9,8 +9,8 @@ import { Card, Empty, Badge, btnSmall, inputCls, labelCls } from "@/components/u
 import SubmitButton from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
-// 収集状況タブの自動収集アクションはこのセグメントで実行される
-export const maxDuration = 60;
+// 収集状況タブの自動収集アクションはこのセグメントで実行される（Web検索が長いため180秒）
+export const maxDuration = 180;
 
 const TABS = [
   { id: "collect", label: "収集状況" },
