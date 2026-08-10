@@ -188,7 +188,7 @@ export async function GET(req: NextRequest) {
   }
 
   // Excel が日本語を正しく開けるよう UTF-8 BOM を付ける
-  const body = "﻿" + rows.map((r) => r.map(csvField).join(",")).join("\r\n") + "\r\n";
+  const body = String.fromCharCode(0xfeff) + rows.map((r) => r.map(csvField).join(",")).join("\r\n") + "\r\n";
 
   const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
   const niceName = `jindori_${String(camp.name).replace(/[\\/:*?"<>|\s]+/g, "_")}_${date}.csv`;
