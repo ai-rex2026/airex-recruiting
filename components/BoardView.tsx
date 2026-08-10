@@ -254,6 +254,13 @@ export default async function BoardView({ campaignId }: { campaignId: string }) 
 
   return (
     <>
+      {/* ===== エクスポート ===== */}
+      <div className="flex justify-end">
+        <a href={`/api/export/board?campaign=${campaignId}`} className={btnSmall}>
+          CSVダウンロード
+        </a>
+      </div>
+
       {/* ===== KW軸の陣取り表 ===== */}
       {(kws ?? []).map((k) => {
         const snap = latestSnap.get(k.id);
