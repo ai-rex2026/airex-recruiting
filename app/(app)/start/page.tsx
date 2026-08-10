@@ -3,8 +3,8 @@ import CollectionCenter, { type CampaignGroup, type JobInfo } from "./Collection
 
 export const dynamic = "force-dynamic";
 // サーバーアクション（AI分析・Web検索収集）はこのページのセグメント設定で実行されるため、
-// タイムアウトを 60 秒に引き上げておく（vercel.json でも全関数 60s を指定済み）。
-export const maxDuration = 60;
+// タイムアウトを 180 秒に引き上げておく（vercel.json でも全関数 180s を指定済み）。
+export const maxDuration = 180;
 
 type JobRow = {
   id: string;
