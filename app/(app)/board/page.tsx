@@ -27,7 +27,7 @@ export default async function BoardPage({
         <div>
           <h1 className="text-xl font-bold text-[#1B2A4A]">陣取りボード</h1>
           <p className="mt-1 text-xs text-slate-500">
-            どこを取りに行くかを決める盤面。ここで打診対象を確定すると、AIが文面を下書きします。
+            KW×メディア×掲載枠（1位〜5位）の占有状況を一覧する調査用の盤面です。
           </p>
           {campaignId && (
             <p className="mt-1 text-xs">
