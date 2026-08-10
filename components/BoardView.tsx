@@ -2,7 +2,6 @@ import Link from "next/link";
 import { getSessionProfile } from "@/lib/supabase/server";
 import EnrichButton from "@/components/EnrichButton";
 import { Card, Empty, Badge, btnSmall } from "@/components/ui";
-import { OUTREACH_STATUS, statusTone } from "@/lib/domain";
 
 type Listing = { serp_entry_id: string; position: number | null; service_name: string; is_own: boolean };
 
@@ -108,7 +107,7 @@ function RankCells({ listings }: { listings: Listing[] }) {
 
 /**
  * 陣取りボード本体（サーバーコンポーネント）：KW軸のマトリクス表示。
- * KWごとに最新スナップショットのランキング/比較記事を「検索順位 × 記事内の掲載枠 × 自社掲載 × 打診状況」で並べる。
+ * KWごとに最新スナップショットのランキング/比較記事を「検索順位 × 記事内の掲載枠 × 自社掲載」で並べる。
  * /board と /campaigns/[id]?tab=board の両方から使う。
  */
 export default async function BoardView({ campaignId }: { campaignId: string }) {
@@ -169,13 +168,12 @@ export default async function BoardView({ campaignId }: { campaignId: string }) 
   }
   const snapMediaIds = new Set(entries.map((e) => e.media_id).filter(Boolean) as string[]);
 
-  // --- この案件の打診対象（チップ表示＋検索結果に紐づかない候補の抽出に使う） ---
+  // --- この案件の打診対象（検索結果に紐づかない候補メディアの抽出に使う） ---
   const { data: targets } = await sb
     .from("outreach_targets")
     .select("*, media:media(*), campaign:campaigns(name)")
     .eq("campaign_id", campaignId)
     .order("rank", { ascending: true, nullsFirst: false });
-  const targetByMedia = new Map((targets ?? []).map((t) => [t.media_id, t]));
 
   if (!(kws ?? []).length && !(targets ?? []).length) {
     return (
@@ -194,15 +192,8 @@ export default async function BoardView({ campaignId }: { campaignId: string }) 
 
   return (
     <>
-      {/* ===== 閲覧専用の注記＋エクスポート ===== */}
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs text-slate-500">
-          このボードは<span className="font-semibold">閲覧専用</span>です。打診の操作（対象確定・文面生成・対象外）は
-          <Link href={`/campaigns/${campaignId}?tab=outreach`} className="mx-0.5 underline">
-            打診・返信・掲載
-          </Link>
-          タブ、送信の承認は承認キューで行います。
-        </p>
+      {/* ===== エクスポート ===== */}
+      <div className="flex justify-end">
         <a href={`/api/export/board?campaign=${campaignId}`} className={btnSmall}>
           CSVダウンロード
         </a>
@@ -255,12 +246,10 @@ export default async function BoardView({ campaignId }: { campaignId: string }) 
                       ))}
                       <th className="w-16 pb-2 text-center">6位〜</th>
                       <th className="w-28 pb-2">自社掲載</th>
-                      <th className="pb-2">打診</th>
                     </tr>
                   </thead>
                   <tbody>
                     {rows.map((e) => {
-                      const t = e.media ? targetByMedia.get(e.media.id) : undefined;
                       return (
                         <tr key={e.id}>
                           <td className="py-2 text-right font-semibold text-[#1B2A4A]">
@@ -309,15 +298,6 @@ export default async function BoardView({ campaignId }: { campaignId: string }) 
                               </div>
                             )}
                           </td>
-                          <td className="py-2">
-                            {t ? (
-                              <Badge tone={statusTone(t.status)}>
-                                {OUTREACH_STATUS[t.status as keyof typeof OUTREACH_STATUS] ?? t.status}
-                              </Badge>
-                            ) : (
-                              <span className="text-[11px] text-slate-400">—</span>
-                            )}
-                          </td>
                         </tr>
                       );
                     })}
@@ -333,13 +313,12 @@ export default async function BoardView({ campaignId }: { campaignId: string }) 
       {unmatched.length > 0 && (
         <Card
           title={`検索結果に紐づかない候補メディア（${unmatched.length}件）`}
-          desc="最新の収集結果には現れていないが、打診対象として登録されているメディア（掲載候補シート由来など）。操作は「打診・返信・掲載」タブ／承認キューで行います"
+          desc="最新の収集結果には現れていないが、候補として登録されているメディア（掲載候補シート由来など）"
         >
           <table className="tbl w-full text-sm">
             <thead>
               <tr className="text-left text-[11px] text-slate-500">
                 <th className="pb-2">メディア</th>
-                <th className="w-32 pb-2">状態</th>
                 <th className="pb-2">備考</th>
               </tr>
             </thead>
@@ -356,11 +335,6 @@ export default async function BoardView({ campaignId }: { campaignId: string }) 
                       {m?.domain ? (
                         <div className="text-[11px] text-slate-400">{m.domain as string}</div>
                       ) : null}
-                    </td>
-                    <td className="py-2">
-                      <Badge tone={statusTone(t.status)}>
-                        {OUTREACH_STATUS[t.status as keyof typeof OUTREACH_STATUS] ?? t.status}
-                      </Badge>
                     </td>
                     <td className="py-2 text-xs text-slate-500">
                       {t.kind === "replace" ? "リプレイス" : "新規"}
