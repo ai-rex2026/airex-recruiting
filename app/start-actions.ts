@@ -147,7 +147,7 @@ export type ProposeResult =
   | { ok: true; draft: CampaignDraft; input_url: string; note?: string }
   | { ok: false; error: string };
 
-function htmlToText(html: string): string {
+function htmlToText(html: string, limit = 15000): string {
   return html
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
@@ -160,7 +160,7 @@ function htmlToText(html: string): string {
     .replace(/&quot;/gi, '"')
     .replace(/\s+/g, " ")
     .trim()
-    .slice(0, 15000);
+    .slice(0, limit);
 }
 
 export async function proposeCampaignFromInput(formData: FormData): Promise<ProposeResult> {
@@ -378,7 +378,7 @@ type FoundSite = {
 };
 
 export type CollectAutoResult =
-  | { ok: true; job_id: string; found: number; ranking_articles: number; media_new: number }
+  | { ok: true; job_id: string; snapshot_id: string; found: number; ranking_articles: number; media_new: number }
   | { ok: false; error: string };
 
 /** running のまま5分を超えたジョブは中断とみなして引き継ぐ */
@@ -651,7 +651,7 @@ export async function collectKeywordAuto(jobId: string): Promise<CollectAutoResu
   revalidatePath("/start");
   revalidatePath(`/campaigns/${campaignId}`);
 
-  return { ok: true, job_id: job.id, found: sites.length, ranking_articles: rankingArticles, media_new: mediaNew };
+  return { ok: true, job_id: job.id, snapshot_id: snap.id, found: sites.length, ranking_articles: rankingArticles, media_new: mediaNew };
 }
 
 /* ============ 収集ジョブの再開・再収集・個別作成 ============ */
@@ -731,6 +731,197 @@ export async function startCollectionForCampaign(
 
   revalidatePath("/start");
   return { ok: true, jobs: runnable };
+}
+
+/* ============ 第2段階：記事本文の読取（掲載枠の抽出） ============ */
+
+export type EnrichResult =
+  | { ok: true; found: number; own_listed: boolean }
+  | { ok: false; error: string };
+
+type EnrichedBody = {
+  is_ranking_article: boolean;
+  listed_services: { position: number | null; name: string }[];
+  own_listed: boolean;
+  own_position: number | null;
+};
+
+/**
+ * 記事本文をサーバー側で取得し、掲載枠（記事内の商品・サービスと順位）を本文から抽出して保存する。
+ * Web検索（SERPスニペット）だけでは読めない比較表・ランキング表を補完する第2段階。
+ * 既存の article_listings は置き換える。取得失敗時は既存データに触れない。
+ */
+export async function enrichArticleListings(serpEntryId: string): Promise<EnrichResult> {
+  const { sb, profile } = await ctx();
+
+  if (!hasAnthropic()) {
+    return { ok: false, error: "ANTHROPIC_API_KEY が未設定です。" };
+  }
+
+  const { data: entry } = await sb
+    .from("serp_entries")
+    .select(
+      "*, snapshot:serp_snapshots(id, keyword:keywords(id, keyword, campaign_id, campaign:campaigns(id, name, product_name, selling_points)))"
+    )
+    .eq("id", serpEntryId)
+    .maybeSingle();
+  if (!entry) return { ok: false, error: "記事エントリが見つかりません。" };
+  if (!entry.article_url) return { ok: false, error: "記事URLがありません。" };
+
+  const snapObj = entry.snapshot as unknown as {
+    keyword?: {
+      keyword: string;
+      campaign_id: string;
+      campaign?: { id: string; name: string; product_name: string; selling_points: string } | null;
+    } | null;
+  } | null;
+  const camp = snapObj?.keyword?.campaign;
+  const campaignId = snapObj?.keyword?.campaign_id ?? "";
+  const productName = camp?.product_name || camp?.name || "";
+
+  // --- 記事本文の取得（比較表は中盤以降にあることが多いので 30,000 文字まで読む） ---
+  let bodyText = "";
+  try {
+    const res = await fetch(entry.article_url, {
+      signal: AbortSignal.timeout(12_000),
+      headers: {
+        "user-agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        "accept-language": "ja,en;q=0.8",
+        accept: "text/html,application/xhtml+xml",
+      },
+    });
+    if (!res.ok) return { ok: false, error: `本文取得不可(${res.status})` };
+    const html = await res.text();
+    bodyText = htmlToText(html, 30_000);
+  } catch {
+    return { ok: false, error: "本文取得不可(タイムアウト等)" };
+  }
+  if (!bodyText) return { ok: false, error: "本文取得不可(本文なし)" };
+
+  // --- 本文から掲載枠を抽出 ---
+  const out = await askJson<EnrichedBody>(
+    `あなたは日本のアフィリエイト広告代理店のリサーチ担当です。記事本文から「掲載枠」（記事内で紹介されている商品・サービスとその順位）を抽出します。
+ルール（厳守）:
+- 記事に明確な順位付きランキングがある場合: listed_services の position を 1..N として上位から最大20件
+- 順位のない比較表・リスト（「おすすめ15選」等）の場合: 特定できる商品・サービス名をすべて記事内の登場順で最大20件、position はすべて null
+- 商品・サービス名を特定できない場合: listed_services は空配列 []
+- 「情報不足のため特定不可」「不明」などのプレースホルダ文字列を name に入れてはならない（実在の商品・サービス名のみ）
+- is_ranking_article = この記事が複数の商品・サービスを紹介・比較するランキング/比較/おすすめ記事かどうか
+- own_listed = 対象商材「${productName}」が掲載商品として記事内に含まれるか。含まれる場合、順位が分かれば own_position（無ければ null）`,
+    `対象商材: ${productName}（訴求: ${camp?.selling_points || "—"}）
+記事タイトル: ${entry.article_title || "—"}
+記事URL: ${entry.article_url}
+
+記事本文（抽出テキスト）:
+---
+${bodyText}
+---
+
+出力形式（STRICT JSON のみ）:
+{"is_ranking_article":true,"listed_services":[{"position":1,"name":"..."}],"own_listed":false,"own_position":null}`,
+    4000
+  );
+  if (!out || !Array.isArray(out.listed_services)) {
+    return { ok: false, error: "本文の解析に失敗しました。" };
+  }
+
+  const prod = String(productName).trim();
+  const isOwnName = (name: string) => !!prod && !!name && (name.includes(prod) || prod.includes(name));
+
+  const services = out.listed_services
+    .map((s) => ({
+      position: s?.position != null && Number(s.position) > 0 ? Number(s.position) : null,
+      name: String(s?.name || "").trim(),
+    }))
+    .filter((s) => s.name)
+    .slice(0, 20);
+
+  // --- 置き換え保存 ---
+  await sb.from("article_listings").delete().eq("serp_entry_id", entry.id);
+  if (services.length) {
+    await sb.from("article_listings").insert(
+      services.map((s) => ({
+        tenant_id: profile.tenant_id,
+        serp_entry_id: entry.id,
+        position: s.position,
+        service_name: s.name,
+        is_own: isOwnName(s.name),
+      }))
+    );
+  }
+
+  const ownListed = !!out.own_listed;
+  const today = new Date().toISOString().slice(0, 10);
+  const baseReason = String(entry.judge_reason || "")
+    .replace(/／?本文読取済\(\d{4}-\d{2}-\d{2}\)/g, "")
+    .trim();
+  const judgeReason = `${baseReason ? `${baseReason}／` : ""}本文読取済(${today})`.slice(0, 500);
+
+  await sb
+    .from("serp_entries")
+    .update({
+      is_ranking_article: !!out.is_ranking_article,
+      own_listed: ownListed,
+      own_rank_in_article: out.own_position ?? null,
+      judge_reason: judgeReason,
+    })
+    .eq("id", entry.id);
+
+  // --- 打診対象（campaign×media）の kind を同期（new/replace の判定は収集時と同じ） ---
+  if (campaignId && entry.media_id) {
+    const { data: target } = await sb
+      .from("outreach_targets")
+      .select("id, kind")
+      .eq("campaign_id", campaignId)
+      .eq("media_id", entry.media_id)
+      .maybeSingle();
+    if (target) {
+      const kind = ownListed ? "replace" : "new";
+      if (target.kind !== kind) {
+        await sb
+          .from("outreach_targets")
+          .update({ kind, updated_at: new Date().toISOString() })
+          .eq("id", target.id);
+      }
+    }
+  }
+
+  await audit(
+    sb,
+    profile.tenant_id,
+    profile.id,
+    profile.full_name,
+    "serp_entry",
+    entry.id,
+    "enriched",
+    `本文読取 掲載枠${services.length}件 / own:${ownListed ? "掲載" : "未掲載"}`
+  );
+  revalidatePath("/board");
+  if (campaignId) revalidatePath(`/campaigns/${campaignId}`);
+
+  return { ok: true, found: services.length, own_listed: ownListed };
+}
+
+export type EnrichableEntry = { entry_id: string; title: string };
+
+/** スナップショット内の本文読取対象（ランキング/比較記事）を検索順位順に返す */
+export async function listEnrichableEntries(
+  snapshotId: string
+): Promise<{ ok: true; entries: EnrichableEntry[] } | { ok: false; error: string }> {
+  const { sb } = await ctx();
+  const { data, error } = await sb
+    .from("serp_entries")
+    .select("id, article_title, article_url, rank, is_ranking_article")
+    .eq("snapshot_id", snapshotId)
+    .order("rank", { ascending: true, nullsFirst: false });
+  if (error) return { ok: false, error: error.message };
+  return {
+    ok: true,
+    entries: (data ?? [])
+      .filter((e) => e.article_url && e.is_ranking_article)
+      .map((e) => ({ entry_id: e.id, title: e.article_title || e.article_url })),
+  };
 }
 
 /** キーワード1件に実行可能なジョブを用意する（既存の pending/error/stale running があればそれを返す） */
