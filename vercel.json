@@ -1,7 +1,7 @@
 {
   "functions": {
     "app/**/*.{ts,tsx}": {
-      "maxDuration": 60
+      "maxDuration": 180
     }
   }
 }
