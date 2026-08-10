@@ -268,6 +268,12 @@ export default function CampaignJobs({
                       {s === "done" ? "再収集" : "収集"}
                     </button>
                   )}
+                  <Link
+                    href={`/collect?campaign=${g.id}&keyword=${row.keyword_id}`}
+                    className="ml-2 whitespace-nowrap text-[11px] text-slate-400 underline hover:text-slate-600"
+                  >
+                    貼り付けで取り込む
+                  </Link>
                 </td>
               </tr>
             );
