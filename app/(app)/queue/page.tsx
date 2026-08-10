@@ -2,6 +2,8 @@ import Link from "next/link";
 import { getSessionProfile } from "@/lib/supabase/server";
 import { approveAndQueue, saveDraft, setTargetStatus, confirmReply, addReply } from "@/app/actions";
 import ApproveCard, { type QueueItem } from "@/components/ApproveCard";
+import ExceptionsView from "@/components/ExceptionsView";
+import OutboxView from "@/components/OutboxView";
 import { Card, Empty, Badge, btnGhost, inputCls } from "@/components/ui";
 import { REPLY_CLASS } from "@/lib/domain";
 import SubmitButton from "@/components/SubmitButton";
@@ -14,7 +16,60 @@ export default async function QueuePage({
   searchParams: Promise<{ tab?: string }>;
 }) {
   const sp = await searchParams;
-  const tab = sp.tab === "reply" ? "reply" : "send";
+  const top = sp.tab === "exceptions" ? "exceptions" : sp.tab === "outbox" ? "outbox" : "approve";
+  const { sb } = await getSessionProfile();
+
+  // タブ見出し用の軽いカウント
+  const [{ count: waitN }, { count: excN }] = await Promise.all([
+    sb
+      .from("outreach_targets")
+      .select("id", { count: "exact", head: true })
+      .in("status", ["awaiting_approval", "replied"]),
+    sb
+      .from("outreach_targets")
+      .select("id", { count: "exact", head: true })
+      .in("status", ["exception", "uncertain"]),
+  ]);
+
+  const TOP = [
+    { id: "approve", label: `承認待ち（${waitN ?? 0}）`, href: "/queue" },
+    { id: "exceptions", label: `例外対応（${excN ?? 0}）`, href: "/queue?tab=exceptions" },
+    { id: "outbox", label: "送信ログ", href: "/queue?tab=outbox" },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <header>
+        <h1 className="text-xl font-bold text-[#1B2A4A]">承認キュー</h1>
+        <p className="mt-1 text-xs text-slate-500">
+          判断を待っている件だけが積まれています。上から捌けば業務が進みます。例外対応と送信ログもここから確認できます。
+        </p>
+      </header>
+
+      {/* トップレベルタブ：承認待ち／例外対応／送信ログ */}
+      <nav className="flex flex-wrap gap-1.5 border-b border-slate-200 pb-2">
+        {TOP.map((t) => (
+          <Link
+            key={t.id}
+            href={t.href}
+            className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
+              top === t.id ? "bg-[#1B2A4A] text-white" : "bg-white text-slate-600 hover:bg-slate-100"
+            }`}
+          >
+            {t.label}
+          </Link>
+        ))}
+      </nav>
+
+      {top === "approve" && <ApproveQueue tab={sp.tab === "reply" ? "reply" : "send"} />}
+      {top === "exceptions" && <ExceptionsView />}
+      {top === "outbox" && <OutboxView />}
+    </div>
+  );
+}
+
+/** 承認待ちタブの本体（送信承認待ち／返信の分類待ち） */
+async function ApproveQueue({ tab }: { tab: "send" | "reply" }) {
   const { sb } = await getSessionProfile();
 
   const { data: sendTargets } = await sb
@@ -101,14 +156,7 @@ export default async function QueuePage({
     .limit(200);
 
   return (
-    <div className="space-y-6">
-      <header>
-        <h1 className="text-xl font-bold text-[#1B2A4A]">承認キュー</h1>
-        <p className="mt-1 text-xs text-slate-500">
-          判断を待っている件だけが積まれています。上から捌けば業務が進みます。
-        </p>
-      </header>
-
+    <>
       <div className="flex gap-2">
         <Link
           href="/queue"
@@ -249,6 +297,6 @@ export default async function QueuePage({
           )}
         </div>
       )}
-    </div>
+    </>
   );
 }
