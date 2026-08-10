@@ -39,10 +39,20 @@ export default async function CollectPage({
         <p className="mt-1 text-xs text-slate-500">
           URLや商品テキストから自動で収集するには{" "}
           <Link href="/start" className="font-semibold text-[#C1553B] underline">
-            かんたん開始
+            案件・収集
           </Link>{" "}
           へ。
         </p>
+        {campaignId && (
+          <p className="mt-1 text-xs">
+            <Link
+              href={`/campaigns/${campaignId}?tab=collect`}
+              className="text-slate-500 underline hover:text-slate-700"
+            >
+              ← 案件詳細に戻る
+            </Link>
+          </p>
+        )}
       </header>
 
       <Card
