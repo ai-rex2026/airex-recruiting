@@ -10,8 +10,13 @@ export type XlsxSheet = {
   name: string;
   /** 列幅（文字数）。ヘッダーと同じ数だけ渡す */
   cols: number[];
-  /** 1行目はヘッダー扱い（固定＋オートフィルタ） */
   rows: XlsxCell[][];
+  /** 表の見出し行（0始まり）。ここまでを固定し、ここからオートフィルタを張る。既定は先頭行 */
+  headerRow?: number;
+  /** 結合セル。"A1:W1" の形式 */
+  merges?: string[];
+  /** 行の高さ（0始まりの行インデックス → ポイント） */
+  rowHeights?: Record<number, number>;
 };
 
 /** styles.xml の cellXfs のインデックス。呼び出し側はこれを XlsxCell.s に渡す */
@@ -23,6 +28,14 @@ export const XS = {
   own: 4,
   link: 5,
   muted: 6,
+  /** 順位なし行：グレー地＋斜体で、順位あり行と見分けられるようにする */
+  dim: 7,
+  dimNum: 8,
+  /** 案件カルテのヘッダーブロック用 */
+  briefTitle: 9,
+  briefLabel: 10,
+  briefValue: 11,
+  brief: 12,
 } as const;
 
 const enc = new TextEncoder();
@@ -57,7 +70,8 @@ function esc(s: string): string {
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "");
 }
 
-function colName(i: number): string {
+/** 0始まりの列インデックスを A, B, … AA の形にする（結合セルの指定でも使う） */
+export function colName(i: number): string {
   let n = i + 1;
   let s = "";
   while (n > 0) {
@@ -142,25 +156,29 @@ function zipStore(files: { name: string; data: Uint8Array }[]): Uint8Array {
 
 const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-<fonts count="5">
+<fonts count="7">
 <font><sz val="11"/><name val="游ゴシック"/></font>
 <font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="游ゴシック"/></font>
 <font><b/><sz val="11"/><color rgb="FFC1553B"/><name val="游ゴシック"/></font>
 <font><u/><sz val="11"/><color rgb="FF1155CC"/><name val="游ゴシック"/></font>
 <font><sz val="11"/><color rgb="FF94A3B8"/><name val="游ゴシック"/></font>
+<font><i/><sz val="11"/><color rgb="FF64748B"/><name val="游ゴシック"/></font>
+<font><b/><sz val="11"/><color rgb="FF1B2A4A"/><name val="游ゴシック"/></font>
 </fonts>
-<fills count="4">
+<fills count="6">
 <fill><patternFill patternType="none"/></fill>
 <fill><patternFill patternType="gray125"/></fill>
 <fill><patternFill patternType="solid"><fgColor rgb="FF1B2A4A"/><bgColor indexed="64"/></patternFill></fill>
 <fill><patternFill patternType="solid"><fgColor rgb="FFFDECE8"/><bgColor indexed="64"/></patternFill></fill>
+<fill><patternFill patternType="solid"><fgColor rgb="FFF1F5F9"/><bgColor indexed="64"/></patternFill></fill>
+<fill><patternFill patternType="solid"><fgColor rgb="FFFDF0E6"/><bgColor indexed="64"/></patternFill></fill>
 </fills>
 <borders count="2">
 <border><left/><right/><top/><bottom/><diagonal/></border>
 <border><left style="thin"><color rgb="FFD9DEE7"/></left><right style="thin"><color rgb="FFD9DEE7"/></right><top style="thin"><color rgb="FFD9DEE7"/></top><bottom style="thin"><color rgb="FFD9DEE7"/></bottom><diagonal/></border>
 </borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="7">
+<cellXfs count="13">
 <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
 <xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
 <xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="center"/></xf>
@@ -168,13 +186,20 @@ const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <xf numFmtId="0" fontId="2" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center"/></xf>
 <xf numFmtId="0" fontId="3" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="center"/></xf>
 <xf numFmtId="0" fontId="4" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="0" fontId="5" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center"/></xf>
+<xf numFmtId="0" fontId="5" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center"/></xf>
+<xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>
+<xf numFmtId="0" fontId="6" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>
+<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="top" wrapText="1"/></xf>
 </cellXfs>
 </styleSheet>`;
 
-function sheetXml(sheet: XlsxSheet): string {
+function sheetXml(sheet: XlsxSheet, first: boolean): string {
   // 実データの最大列幅で dimension を決める（列定義より多い行があっても壊れないように）
   const nCols = Math.max(sheet.cols.length, ...sheet.rows.map((r) => r.length), 1);
   const lastCol = colName(nCols - 1);
+  const headerRow = sheet.headerRow ?? 0;
   const cols = sheet.cols
     .map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`)
     .join("");
@@ -194,25 +219,46 @@ function sheetXml(sheet: XlsxSheet): string {
           )}</t></is></c>`;
         })
         .join("");
-      const attrs = ri === 0 ? ` ht="26" customHeight="1"` : "";
+      const h = sheet.rowHeights?.[ri] ?? (ri === headerRow ? 26 : undefined);
+      const attrs = h ? ` ht="${h}" customHeight="1"` : "";
       return `<row r="${r}"${attrs}>${cs}</row>`;
     })
     .join("");
 
+  const lastRow = Math.max(sheet.rows.length, headerRow + 1);
+  // 見出し行までを固定し、オートフィルタも見出し行から張る（上に案件カルテを積んでもズレないように）
+  const freezeAt = headerRow + 2;
+  const filterRef = `A${headerRow + 1}:${lastCol}${lastRow}`;
+  const mergeXml = sheet.merges?.length
+    ? `<mergeCells count="${sheet.merges.length}">${sheet.merges
+        .map((m) => `<mergeCell ref="${m}"/>`)
+        .join("")}</mergeCells>`
+    : "";
+
+  // 要素の順序は CT_Worksheet の定義どおり（sheetData → autoFilter → mergeCells）
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-<dimension ref="A1:${lastCol}${Math.max(sheet.rows.length, 1)}"/>
-<sheetViews><sheetView tabSelected="1" workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/><selection pane="bottomLeft" activeCell="A2" sqref="A2"/></sheetView></sheetViews>
+<dimension ref="A1:${lastCol}${lastRow}"/>
+<sheetViews><sheetView${first ? ' tabSelected="1"' : ""} workbookViewId="0"><pane ySplit="${headerRow + 1}" topLeftCell="A${freezeAt}" activePane="bottomLeft" state="frozen"/><selection pane="bottomLeft" activeCell="A${freezeAt}" sqref="A${freezeAt}"/></sheetView></sheetViews>
 <sheetFormatPr defaultRowHeight="18"/>
 <cols>${cols}</cols>
 <sheetData>${rows}</sheetData>
-<autoFilter ref="A1:${lastCol}${Math.max(sheet.rows.length, 1)}"/>
-</worksheet>`;
+<autoFilter ref="${filterRef}"/>
+${mergeXml}</worksheet>`;
 }
 
-/** 1シートの .xlsx バイト列を組み立てる */
-export function buildXlsx(sheet: XlsxSheet): Uint8Array {
-  const name = esc(sheet.name.slice(0, 31) || "Sheet1");
+/** Excel のシート名に使えない文字を落とし、31文字に収める */
+function sheetName(raw: string, i: number): string {
+  const s = raw.replace(/[\\/:*?[\]]/g, "_").slice(0, 31);
+  return esc(s || `Sheet${i + 1}`);
+}
+
+/** 複数シートの .xlsx バイト列を組み立てる */
+export function buildXlsx(sheets: XlsxSheet[]): Uint8Array {
+  const list = sheets.length ? sheets : [{ name: "Sheet1", cols: [], rows: [] }];
+  // styles は末尾の rId を使い、シートぶんの rId1..N と衝突させない
+  const stylesRid = `rId${list.length + 1}`;
+
   const files: { name: string; data: Uint8Array }[] = [
     {
       name: "[Content_Types].xml",
@@ -221,7 +267,12 @@ export function buildXlsx(sheet: XlsxSheet): Uint8Array {
 <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
 <Default Extension="xml" ContentType="application/xml"/>
 <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
-<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+${list
+  .map(
+    (_, i) =>
+      `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`
+  )
+  .join("\n")}
 <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
 </Types>`),
     },
@@ -236,19 +287,32 @@ export function buildXlsx(sheet: XlsxSheet): Uint8Array {
       name: "xl/workbook.xml",
       data: enc.encode(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
-<sheets><sheet name="${name}" sheetId="1" r:id="rId1"/></sheets>
+<sheets>${list
+        .map(
+          (s, i) =>
+            `<sheet name="${sheetName(s.name, i)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`
+        )
+        .join("")}</sheets>
 </workbook>`),
     },
     {
       name: "xl/_rels/workbook.xml.rels",
       data: enc.encode(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
-<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+${list
+  .map(
+    (_, i) =>
+      `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`
+  )
+  .join("\n")}
+<Relationship Id="${stylesRid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
 </Relationships>`),
     },
     { name: "xl/styles.xml", data: enc.encode(STYLES) },
-    { name: "xl/worksheets/sheet1.xml", data: enc.encode(sheetXml(sheet)) },
+    ...list.map((s, i) => ({
+      name: `xl/worksheets/sheet${i + 1}.xml`,
+      data: enc.encode(sheetXml(s, i === 0)),
+    })),
   ];
   return zipStore(files);
 }

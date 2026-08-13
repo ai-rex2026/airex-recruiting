@@ -64,6 +64,10 @@ export async function updateCampaignInfo(formData: FormData) {
       conversion_point: String(formData.get("conversion_point") || ""),
       approval_terms: String(formData.get("approval_terms") || ""),
       selling_points: String(formData.get("selling_points") || ""),
+      genre: String(formData.get("genre") || ""),
+      reference_url: safeUrl(String(formData.get("reference_url") || "")),
+      draft_url: safeUrl(String(formData.get("draft_url") || "")),
+      brief: String(formData.get("brief") || ""),
     })
     .eq("id", id);
   await audit(sb, profile.tenant_id, profile.id, profile.full_name, "campaign", id, "updated");

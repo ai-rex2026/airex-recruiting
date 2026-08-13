@@ -45,6 +45,13 @@ create table if not exists campaigns (
   created_at timestamptz not null default now()
 );
 
+-- 陣取り表のヘッダー（案件カルテ）で使う項目。既存プロジェクトにも足すため alter で追記する
+alter table campaigns add column if not exists genre         text not null default '';
+alter table campaigns add column if not exists reference_url text not null default '';
+alter table campaigns add column if not exists draft_url     text not null default '';
+-- brief は案件固有の長文（理想のユーザー像・NG層・検索意図・推奨KW 等）を自由記述で持つ
+alter table campaigns add column if not exists brief         text not null default '';
+
 create table if not exists keywords (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null references tenants(id) on delete cascade,

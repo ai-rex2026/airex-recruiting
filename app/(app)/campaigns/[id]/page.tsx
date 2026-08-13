@@ -180,9 +180,36 @@ export default async function CampaignDetail({
                 <label className={labelCls}>承認条件</label>
                 <input name="approval_terms" defaultValue={c.approval_terms} className={inputCls} />
               </div>
+              <div>
+                <label className={labelCls}>ジャンル</label>
+                <input name="genre" defaultValue={c.genre ?? ""} className={inputCls} placeholder="起業家育成スクール" />
+              </div>
+              <div>
+                <label className={labelCls}>参考URL</label>
+                <input name="reference_url" defaultValue={c.reference_url ?? ""} className={inputCls} placeholder="https://" />
+              </div>
+              <div>
+                <label className={labelCls}>入稿URL</label>
+                <input name="draft_url" defaultValue={c.draft_url ?? ""} className={inputCls} placeholder="https://" />
+              </div>
               <div className="md:col-span-2">
                 <label className={labelCls}>訴求ポイント・信用点</label>
                 <textarea name="selling_points" defaultValue={c.selling_points} rows={2} className={inputCls} />
+              </div>
+              <div className="md:col-span-2">
+                <label className={labelCls}>
+                  案件カルテ
+                  <span className="ml-1 font-normal text-slate-400">
+                    理想のユーザー像・NG層・検索意図・推奨KWなど。陣取り表のヘッダーにそのまま出ます
+                  </span>
+                </label>
+                <textarea
+                  name="brief"
+                  defaultValue={c.brief ?? ""}
+                  rows={10}
+                  className={`${inputCls} font-mono text-xs`}
+                  placeholder={"① 理想のユーザー像\n・…\n\n② NGユーザー層\n・…\n\n③ 受講者の検索意図\n・…\n\n④ SEO検索キーワードの希望\n・…"}
+                />
               </div>
               <div className="md:col-span-2">
                 <SubmitButton variant="accent">保存</SubmitButton>
