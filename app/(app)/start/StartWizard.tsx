@@ -1,7 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Card, btnAccent, btnGhost, inputCls, labelCls } from "@/components/ui";
+import { createClient } from "@/lib/supabase/client";
+import { registerDocument, extractDocument, type BriefExtract } from "@/app/document-actions";
 import {
   proposeCampaignFromInput,
   createCampaignFromDraft,
@@ -17,8 +19,10 @@ type KwRow = { keyword: string; priority: number; checked: boolean };
  */
 export default function StartWizard({
   onCreated,
+  tenantId,
 }: {
   onCreated: (campaignId: string, jobs: RunnableJob[]) => void;
+  tenantId: string;
 }) {
   const [step, setStep] = useState<1 | 2>(1);
   const [busy, setBusy] = useState(false);
@@ -29,9 +33,80 @@ export default function StartWizard({
   const [inputUrl, setInputUrl] = useState("");
   const [inputText, setInputText] = useState("");
 
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [docName, setDocName] = useState<string | null>(null);
+
   // Step2
   const [draft, setDraft] = useState<CampaignDraft | null>(null);
   const [kws, setKws] = useState<KwRow[]>([]);
+
+  /**
+   * 案件資料から作る。LPには載らない報酬条件・承認条件・NG層まで読めるので、
+   * 資料がある場合はこちらが本筋。ファイルはサイズ制限を避けて Storage へ直接送る。
+   */
+  const analyzeDocument = async (file: File) => {
+    setError(null);
+    setNote(null);
+    if (!/\.(pdf|docx|xlsx|xlsm|pptx)$/i.test(file.name)) {
+      setError("PDF / Word(.docx) / Excel(.xlsx) / PowerPoint(.pptx) のいずれかを選んでください。");
+      return;
+    }
+    if (file.size > 32 * 1024 * 1024) {
+      setError("ファイルが大きすぎます（上限32MB）。");
+      return;
+    }
+    setBusy(true);
+    try {
+      const path = `${tenantId}/campaign_brief/new/${crypto.randomUUID()}-${file.name}`;
+      const sb = createClient();
+      const up = await sb.storage.from("documents").upload(path, file, {
+        contentType: file.type || "application/octet-stream",
+      });
+      if (up.error) throw new Error(`アップロードに失敗しました：${up.error.message}`);
+
+      const reg = await registerDocument({
+        kind: "campaign_brief",
+        file_name: file.name,
+        storage_path: path,
+        mime_type: file.type || "",
+        byte_size: file.size,
+      });
+      if (!reg.ok) throw new Error(reg.error);
+
+      const ex = await extractDocument(reg.id);
+      if (!ex.ok) throw new Error(ex.error);
+
+      const b = ex.extracted as BriefExtract;
+      const kwList = (b.keywords || []).filter((k) => k?.keyword);
+      if (!kwList.length) {
+        setNote("資料からキーワードを読み取れませんでした。次の画面で追加してください。");
+      }
+      setDraft({
+        client_name: b.client_name || "",
+        campaign_name: b.campaign_name || `${b.product_name || file.name} 掲載獲得`,
+        product_name: b.product_name || "",
+        selling_points: b.selling_points || "",
+        conversion_point: b.conversion_point || "",
+        keywords: kwList,
+        genre: b.genre || "",
+        lp_url: b.lp_url || "",
+        reference_url: b.reference_url || "",
+        draft_url: b.draft_url || "",
+        unit_price: b.unit_price || "",
+        approval_terms: b.approval_terms || "",
+        brief: b.brief || "",
+        document_id: reg.id,
+      });
+      setDocName(file.name);
+      setKws(kwList.map((k) => ({ keyword: k.keyword, priority: k.priority, checked: true })));
+      setStep(2);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "資料の読み取りに失敗しました。");
+    } finally {
+      setBusy(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  };
 
   const analyze = async () => {
     setError(null);
@@ -78,6 +153,14 @@ export default function StartWizard({
         conversion_point: draft.conversion_point,
         input_url: inputUrl.trim(),
         keywords: selected.map((k) => ({ keyword: k.keyword.trim(), priority: k.priority })),
+        genre: draft.genre,
+        lp_url: draft.lp_url,
+        reference_url: draft.reference_url,
+        draft_url: draft.draft_url,
+        unit_price: draft.unit_price,
+        approval_terms: draft.approval_terms,
+        brief: draft.brief,
+        document_id: draft.document_id,
       });
       if (!res.ok) {
         setError(res.error);
@@ -89,6 +172,7 @@ export default function StartWizard({
       setInputText("");
       setDraft(null);
       setKws([]);
+      setDocName(null);
       onCreated(res.campaign_id, res.jobs);
     } finally {
       setBusy(false);
@@ -126,9 +210,49 @@ export default function StartWizard({
       {step === 1 && (
         <Card
           title="商品を教えてください"
-          desc="商品LPのURL、または商品説明・キーワードのテキスト。どちらか一方でOKです。"
+          desc="案件資料をアップロードするか、商品LPのURL・テキストを入力してください。"
         >
           <div className="space-y-4">
+            <div className="rounded-lg border border-[#F0D9C8] bg-[#FDF7F2] p-3">
+              <label className={labelCls}>案件資料から作る（おすすめ）</label>
+              <p className="mb-2 text-[11px] text-slate-500">
+                報酬条件・承認条件・NGユーザー層・推奨KWは<strong>LPには載っていません</strong>。
+                資料があればこちらの方が正確に埋まります。
+              </p>
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".pdf,.docx,.xlsx,.xlsm,.pptx"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) void analyzeDocument(f);
+                }}
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  className={btnAccent}
+                  disabled={busy}
+                  onClick={() => fileRef.current?.click()}
+                >
+                  {busy ? "読み取り中…" : "資料を選ぶ"}
+                </button>
+                <span className="text-[11px] text-slate-500">
+                  PDF / Word / Excel / PowerPoint（32MBまで）
+                </span>
+              </div>
+              <p className="mt-1.5 text-[11px] text-slate-400">
+                PowerPoint は図の中の文字を読めません。PDF に書き出すと精度が上がります。
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 text-[11px] text-slate-400">
+              <span className="h-px flex-1 bg-slate-200" />
+              または
+              <span className="h-px flex-1 bg-slate-200" />
+            </div>
+
             <div>
               <label className={labelCls}>商品LPのURL</label>
               <input
@@ -166,6 +290,11 @@ export default function StartWizard({
       {step === 2 && draft && (
         <>
           {note && <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">{note}</p>}
+          {docName && (
+            <p className="rounded-md bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+              資料「{docName}」から読み取りました。案件作成後、この資料は案件に紐づいて保管されます。
+            </p>
+          )}
           <Card title="案件とキーワードの確認" desc="AIの提案です。修正してから作成できます。">
             <div className="grid gap-4 md:grid-cols-2">
               <div>

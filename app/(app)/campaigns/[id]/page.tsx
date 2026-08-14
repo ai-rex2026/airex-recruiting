@@ -7,6 +7,7 @@ import BoardView from "@/components/BoardView";
 import CampaignJobs, { type CampaignGroup, type JobInfo } from "@/app/(app)/start/CampaignJobs";
 import { Card, Empty, Badge, btnSmall, inputCls, labelCls } from "@/components/ui";
 import SubmitButton from "@/components/SubmitButton";
+import CampaignDocsCard from "@/components/CampaignDocsCard";
 
 export const dynamic = "force-dynamic";
 // 収集状況タブの自動収集アクションはこのセグメントで実行される（Web検索が長いため180秒）
@@ -216,6 +217,8 @@ export default async function CampaignDetail({
               </div>
             </form>
           </Card>
+
+          <CampaignDocsCard campaignId={id} />
 
           <Card title="キーワードを追加">
             <form action={addKeywords} className="space-y-3">

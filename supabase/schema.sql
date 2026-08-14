@@ -251,6 +251,28 @@ create table if not exists audit_logs (
 );
 create index if not exists idx_audit_created on audit_logs(tenant_id, created_at desc);
 
+-- ============ documents（案件資料・媒体資料の取り込み） ============
+-- ファイル本体は Storage の documents バケットに置き、この表はメタと抽出結果を持つ
+create table if not exists documents (
+  id            uuid primary key default gen_random_uuid(),
+  tenant_id     uuid not null references tenants(id) on delete cascade,
+  kind          text not null,                     -- campaign_brief | media_kit
+  campaign_id   uuid references campaigns(id) on delete cascade,
+  media_id      uuid references media(id) on delete cascade,
+  file_name     text not null,
+  storage_path  text not null,
+  mime_type     text not null default '',
+  byte_size     int  not null default 0,
+  status        text not null default 'uploaded',  -- uploaded | extracting | extracted | error
+  -- 系統ごとに項目が違うので jsonb。再抽出時にファイルを再アップせずに済む
+  extracted     jsonb,
+  extract_error text not null default '',
+  uploaded_by   uuid references profiles(id) on delete set null,
+  created_at    timestamptz not null default now()
+);
+create index if not exists idx_documents_campaign on documents(campaign_id, created_at desc);
+create index if not exists idx_documents_media    on documents(media_id, created_at desc);
+
 -- ============ helper: current tenant ============
 create or replace function current_tenant_id()
 returns uuid language sql stable security definer set search_path = public as $$
@@ -269,7 +291,8 @@ begin
   foreach t in array array[
     'tenants','profiles','clients','campaigns','keywords','media','media_contacts',
     'asp_master','serp_snapshots','serp_entries','article_listings','outreach_targets',
-    'templates','message_drafts','send_attempts','replies','placements','reports','audit_logs'
+    'templates','message_drafts','send_attempts','replies','placements','reports','audit_logs',
+    'documents'
   ] loop
     execute format('alter table %I enable row level security', t);
   end loop;
@@ -293,7 +316,8 @@ begin
   foreach t in array array[
     'clients','campaigns','keywords','media','media_contacts','asp_master',
     'serp_snapshots','serp_entries','article_listings','outreach_targets',
-    'templates','message_drafts','send_attempts','replies','placements','reports','audit_logs'
+    'templates','message_drafts','send_attempts','replies','placements','reports','audit_logs',
+    'documents'
   ] loop
     execute format('drop policy if exists %I on %I', t || '_rw', t);
     execute format(
@@ -346,3 +370,20 @@ alter table collection_jobs enable row level security;
 drop policy if exists collection_jobs_rw on collection_jobs;
 create policy collection_jobs_rw on collection_jobs for all to authenticated
   using (tenant_id = current_tenant_id()) with check (tenant_id = current_tenant_id());
+
+-- ============ storage: documents バケット（非公開） ============
+insert into storage.buckets (id, name, public)
+values ('documents', 'documents', false)
+on conflict (id) do nothing;
+
+-- パスの先頭セグメントを tenant_id にしてテナント間を隔離する
+drop policy if exists documents_objects_rw on storage.objects;
+create policy documents_objects_rw on storage.objects for all to authenticated
+  using (
+    bucket_id = 'documents'
+    and (storage.foldername(name))[1] = current_tenant_id()::text
+  )
+  with check (
+    bucket_id = 'documents'
+    and (storage.foldername(name))[1] = current_tenant_id()::text
+  );

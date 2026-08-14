@@ -20,7 +20,7 @@ type JobRow = {
 };
 
 export default async function StartPage() {
-  const { sb } = await getSessionProfile();
+  const { sb, profile } = await getSessionProfile();
 
   const [{ data: campaigns }, { data: keywords }, { data: jobs }] = await Promise.all([
     sb
@@ -84,7 +84,7 @@ export default async function StartPage() {
         </p>
       </header>
 
-      <CollectionCenter groups={groups} />
+      <CollectionCenter groups={groups} tenantId={profile?.tenant_id ?? ""} />
     </div>
   );
 }

@@ -70,7 +70,13 @@ function CampaignSummaryCard({ group }: { group: CampaignGroup }) {
   );
 }
 
-export default function CollectionCenter({ groups }: { groups: CampaignGroup[] }) {
+export default function CollectionCenter({
+  groups,
+  tenantId,
+}: {
+  groups: CampaignGroup[];
+  tenantId: string;
+}) {
   const router = useRouter();
   const [wizardOpen, setWizardOpen] = useState(groups.length === 0);
 
@@ -95,7 +101,7 @@ export default function CollectionCenter({ groups }: { groups: CampaignGroup[] }
             ) : undefined
           }
         >
-          <StartWizard onCreated={onWizardCreated} />
+          <StartWizard onCreated={onWizardCreated} tenantId={tenantId} />
         </Card>
       ) : (
         <Card>

@@ -23,18 +23,9 @@ export async function askText(system: string, user: string, maxTokens = 2000) {
     .trim();
 }
 
-/** JSON を返させる。パースに失敗したら null */
-export async function askJson<T>(
-  system: string,
-  user: string,
-  maxTokens = 4000
-): Promise<T | null> {
-  const raw = await askText(
-    system +
-      "\n\n必ず JSON のみを出力すること。前置き・後置き・コードフェンスを付けない。",
-    user,
-    maxTokens
-  );
+const JSON_ONLY = "\n\n必ず JSON のみを出力すること。前置き・後置き・コードフェンスを付けない。";
+
+function parseJson<T>(raw: string): T | null {
   const cleaned = raw
     .replace(/^```(?:json)?/i, "")
     .replace(/```$/i, "")
@@ -50,4 +41,52 @@ export async function askJson<T>(
       return null;
     }
   }
+}
+
+/** JSON を返させる。パースに失敗したら null */
+export async function askJson<T>(
+  system: string,
+  user: string,
+  maxTokens = 4000
+): Promise<T | null> {
+  return parseJson<T>(await askText(system + JSON_ONLY, user, maxTokens));
+}
+
+/**
+ * PDF などのコンテンツブロックを添えて JSON を返させる。
+ * PDF は DocumentBlockParam で直接渡せるので、図やスキャンも視覚的に読ませられる。
+ */
+export async function askJsonWithContent<T>(
+  system: string,
+  content: Anthropic.Messages.ContentBlockParam[],
+  maxTokens = 4000
+): Promise<T | null> {
+  const res = await client().messages.create({
+    model: MODEL,
+    max_tokens: maxTokens,
+    system: system + JSON_ONLY,
+    messages: [{ role: "user", content }],
+  });
+  const raw = res.content
+    .map((b) => (b.type === "text" ? b.text : ""))
+    .join("")
+    .trim();
+  return parseJson<T>(raw);
+}
+
+/** アップロードされた資料を Claude に渡す形にする（PDF は document ブロック、他はテキスト） */
+export function fileContentBlock(
+  fileName: string,
+  mediaType: string,
+  base64OrText: string,
+  isPdf: boolean
+): Anthropic.Messages.ContentBlockParam {
+  if (isPdf) {
+    return {
+      type: "document",
+      source: { type: "base64", media_type: "application/pdf", data: base64OrText },
+      title: fileName,
+    };
+  }
+  return { type: "text", text: `資料「${fileName}」（${mediaType}）の内容:\n${base64OrText}` };
 }

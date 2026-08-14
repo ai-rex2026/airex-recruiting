@@ -12,6 +12,7 @@ import {
 import { Card, Badge, Empty, inputCls, labelCls } from "@/components/ui";
 import { OUTREACH_STATUS, SEND_RESULT, statusTone } from "@/lib/domain";
 import SubmitButton from "@/components/SubmitButton";
+import MediaKitCard from "@/components/MediaKitCard";
 
 export const dynamic = "force-dynamic";
 
@@ -189,6 +190,8 @@ export default async function MediaDetail({ params }: { params: Promise<{ id: st
           </table>
         )}
       </Card>
+
+      <MediaKitCard mediaId={id} />
 
       <Card title="名寄せ（統合）" desc="このメディアを別レコードに統合します。統合元は削除されます">
         <form action={mergeMedia} className="flex flex-wrap items-end gap-2">

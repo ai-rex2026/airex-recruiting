@@ -145,6 +145,15 @@ export type CampaignDraft = {
   selling_points: string;
   conversion_point: string;
   keywords: { keyword: string; priority: 1 | 2 | 3 }[];
+  /** 資料から作った場合のみ埋まる（LPからは読み取れない取引条件・ターゲット定義） */
+  genre?: string;
+  lp_url?: string;
+  reference_url?: string;
+  draft_url?: string;
+  unit_price?: string;
+  approval_terms?: string;
+  brief?: string;
+  document_id?: string;
 };
 
 export type ProposeResult =
@@ -266,6 +275,15 @@ export async function createCampaignFromDraft(payload: {
   conversion_point: string;
   input_url: string;
   keywords: { keyword: string; priority: number }[];
+  genre?: string;
+  lp_url?: string;
+  reference_url?: string;
+  draft_url?: string;
+  unit_price?: string;
+  approval_terms?: string;
+  brief?: string;
+  /** 資料から作った場合、その資料をこの案件に紐づける */
+  document_id?: string;
 }): Promise<CreateFromDraftResult> {
   const { sb, profile } = await ctx();
 
@@ -306,15 +324,24 @@ export async function createCampaignFromDraft(payload: {
       client_id: clientId,
       name: String(payload.campaign_name || "無題の案件"),
       product_name: String(payload.product_name || ""),
-      lp_url: safeUrl(String(payload.input_url || "")),
-      unit_price: "",
+      lp_url: safeUrl(String(payload.lp_url || payload.input_url || "")),
+      unit_price: String(payload.unit_price || ""),
       conversion_point: String(payload.conversion_point || ""),
-      approval_terms: "",
+      approval_terms: String(payload.approval_terms || ""),
       selling_points: String(payload.selling_points || ""),
+      genre: String(payload.genre || ""),
+      reference_url: safeUrl(String(payload.reference_url || "")),
+      draft_url: safeUrl(String(payload.draft_url || "")),
+      brief: String(payload.brief || ""),
     })
     .select("id")
     .single();
   if (campErr || !camp) return { ok: false, error: `案件の作成に失敗しました：${campErr?.message ?? "不明なエラー"}` };
+
+  // 資料から作った場合、その資料をこの案件に紐づけて証跡として残す
+  if (payload.document_id) {
+    await sb.from("documents").update({ campaign_id: camp.id }).eq("id", payload.document_id);
+  }
 
   const { data: kwRows, error: kwErr } = await sb
     .from("keywords")
