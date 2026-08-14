@@ -3,5 +3,11 @@
     "app/**/*.{ts,tsx}": {
       "maxDuration": 180
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/collect",
+      "schedule": "* * * * *"
+    }
+  ]
 }

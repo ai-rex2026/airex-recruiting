@@ -140,7 +140,7 @@ export default async function CampaignDetail({
       {tab === "collect" && (
         <>
           <p className="text-xs text-slate-500">
-            収集中にこの画面を閉じても、状態はここに残ります。未実行のKWは「再開」から続けられます。
+            画面を閉じても収集は続きます（サーバー側で1分ごとに未実行のKWを拾って進めます）。ここは進捗の確認用です。
           </p>
           <CampaignJobs
             group={group}
