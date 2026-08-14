@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { Card, btnAccent, btnGhost, inputCls, labelCls } from "@/components/ui";
 import { createClient } from "@/lib/supabase/client";
 import { registerDocument, extractDocument, type BriefExtract } from "@/app/document-actions";
+import { documentStorageKey } from "@/lib/storage-key";
 import {
   proposeCampaignFromInput,
   createCampaignFromDraft,
@@ -57,7 +58,7 @@ export default function StartWizard({
     }
     setBusy(true);
     try {
-      const path = `${tenantId}/campaign_brief/new/${crypto.randomUUID()}-${file.name}`;
+      const path = documentStorageKey(tenantId, "campaign_brief", "new", file.name, crypto.randomUUID());
       const sb = createClient();
       const up = await sb.storage.from("documents").upload(path, file, {
         contentType: file.type || "application/octet-stream",

@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { registerDocument, extractDocument, type DocKind } from "@/app/document-actions";
+import { documentStorageKey } from "@/lib/storage-key";
 import { btnAccent, btnSmall } from "@/components/ui";
 
 const ACCEPT = ".pdf,.docx,.xlsx,.xlsm,.pptx";
@@ -50,8 +51,7 @@ export default function DocumentUpload({
     try {
       setBusy("アップロード中…");
       const owner = campaignId ?? mediaId ?? "misc";
-      // 先頭を tenant_id にする（Storage の RLS がこのセグメントで隔離している）
-      const path = `${tenantId}/${kind}/${owner}/${crypto.randomUUID()}-${file.name}`;
+      const path = documentStorageKey(tenantId, kind, owner, file.name, crypto.randomUUID());
 
       const sb = createClient();
       const up = await sb.storage.from("documents").upload(path, file, {
