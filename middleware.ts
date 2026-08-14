@@ -1,7 +1,8 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-const PUBLIC_PATHS = ["/login", "/api/health", "/api/worker"];
+// /api/cron と /api/worker はルート側でトークン認証するため、ここでは素通しする
+const PUBLIC_PATHS = ["/login", "/api/health", "/api/worker", "/api/cron"];
 
 export async function middleware(request: NextRequest) {
   let response = NextResponse.next({ request });
