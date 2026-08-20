@@ -1,7 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getSessionProfile } from "@/lib/supabase/server";
-import { addKeywords, deleteKeyword, suggestKeywords } from "@/app/actions";
+import {
+  addKeywords,
+  deleteKeyword,
+  suggestKeywordCandidates,
+  adoptKeywordSuggestions,
+  dismissKeywordSuggestions,
+  refreshKeywordVolumes,
+} from "@/app/actions";
 import { updateCampaignInfo } from "@/app/start-actions";
 import BoardView from "@/components/BoardView";
 import CampaignJobs, { type CampaignGroup, type JobInfo } from "@/app/(app)/start/CampaignJobs";
@@ -21,12 +28,26 @@ const TABS = [
 
 type TabId = (typeof TABS)[number]["id"];
 
+/** DataForSEO の competition（LOW/MEDIUM/HIGH）の表示ラベル */
+const COMPETITION_LABEL: Record<string, string> = {
+  LOW: "低",
+  MEDIUM: "中",
+  HIGH: "高",
+};
+
+/** 月間検索数。データが無い語（null）と 0 は意味が違うので分けて出す */
+function fmtVolume(v: number | null | undefined): string {
+  if (v == null) return "—";
+  return v.toLocaleString("ja-JP");
+}
+
 type JobRow = {
   id: string;
   keyword_id: string;
   status: "pending" | "running" | "done" | "error";
   found_count: number;
   ranking_count: number;
+  paid_count: number;
   error_detail: string;
   started_at: string | null;
   finished_at: string | null;
@@ -44,6 +65,8 @@ export default async function CampaignDetail({
   const sp = await searchParams;
   const tab: TabId = (TABS.some((t) => t.id === sp.tab) ? sp.tab : "collect") as TabId;
   const { sb } = await getSessionProfile();
+  // 検索ボリューム・関連KWの実データは DataForSEO 依存。未設定なら画面で理由を出す
+  const hasVolumeSource = !!(process.env.DATAFORSEO_LOGIN && process.env.DATAFORSEO_PASSWORD);
 
   const { data: c } = await sb
     .from("campaigns")
@@ -52,7 +75,7 @@ export default async function CampaignDetail({
     .maybeSingle();
   if (!c) notFound();
 
-  const [{ data: kws }, { data: jobs }] = await Promise.all([
+  const [{ data: kws }, { data: jobs }, { data: suggestions }] = await Promise.all([
     sb
       .from("keywords")
       .select("*, snapshots:serp_snapshots(id, collected_at)")
@@ -60,9 +83,16 @@ export default async function CampaignDetail({
       .order("created_at"),
     sb
       .from("collection_jobs")
-      .select("id, keyword_id, status, found_count, ranking_count, error_detail, started_at, finished_at, created_at")
+      .select("id, keyword_id, status, found_count, ranking_count, paid_count, error_detail, started_at, finished_at, created_at")
       .eq("campaign_id", id)
       .order("created_at", { ascending: false }),
+    sb
+      .from("keyword_suggestions")
+      .select("id, keyword, search_volume, competition, source, reason")
+      .eq("campaign_id", id)
+      .eq("status", "suggested")
+      .order("search_volume", { ascending: false, nullsFirst: false })
+      .limit(120),
   ]);
 
   const clientName = (c.client as unknown as { name: string } | null)?.name ?? "";
@@ -88,6 +118,7 @@ export default async function CampaignDetail({
             status: j.status,
             found: j.found_count ?? 0,
             ranking: j.ranking_count ?? 0,
+            paid: j.paid_count ?? 0,
             error: j.error_detail ?? "",
             started_at: j.started_at,
             finished_at: j.finished_at,
@@ -220,21 +251,88 @@ export default async function CampaignDetail({
 
           <CampaignDocsCard campaignId={id} />
 
-          <Card title="キーワードを追加">
+          <Card
+            title="キーワードを追加"
+            desc="件数の上限はありません。1KWごとに検索1回ぶんのAPI料金がかかります"
+          >
             <form action={addKeywords} className="space-y-3">
               <input type="hidden" name="campaign_id" value={id} />
               <textarea
                 name="keywords"
                 rows={4}
                 className={inputCls}
-                placeholder={"改行または読点で区切って入力"}
+                placeholder={"改行または読点で区切って入力（何件でも可）"}
               />
               <SubmitButton variant="accent">追加</SubmitButton>
             </form>
-            <form action={suggestKeywords} className="mt-3">
-              <input type="hidden" name="campaign_id" value={id} />
-              <SubmitButton variant="ghost" pendingLabel="AIが考えています…">AIにKWを提案させる</SubmitButton>
-            </form>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <form action={suggestKeywordCandidates}>
+                <input type="hidden" name="campaign_id" value={id} />
+                <SubmitButton variant="ghost" pendingLabel="候補を集めています…">
+                  KW候補を出す
+                </SubmitButton>
+              </form>
+              <form action={refreshKeywordVolumes}>
+                <input type="hidden" name="campaign_id" value={id} />
+                <SubmitButton variant="ghost" pendingLabel="取得中…">
+                  検索ボリュームを取り直す
+                </SubmitButton>
+              </form>
+            </div>
+            {!hasVolumeSource && (
+              <p className="mt-2 text-[11px] text-amber-700">
+                検索ボリュームの取得には DataForSEO の認証情報（DATAFORSEO_LOGIN / DATAFORSEO_PASSWORD）が必要です。
+                未設定のあいだ、KW候補はAIの提案のみ・ボリュームは空欄になります。
+              </p>
+            )}
+          </Card>
+
+          <Card
+            title="KW候補"
+            desc="採用したものだけが収集対象になります（AIの提案＋関連キーワードの実データ）"
+          >
+            {(suggestions ?? []).length === 0 ? (
+              <Empty>候補がありません。「KW候補を出す」で提案を集めてください。</Empty>
+            ) : (
+              <form action={adoptKeywordSuggestions}>
+                <input type="hidden" name="campaign_id" value={id} />
+                <div className="max-h-96 overflow-y-auto">
+                  <table className="tbl w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-[11px] text-slate-500">
+                        <th className="pb-2 w-8"></th>
+                        <th className="pb-2">キーワード</th>
+                        <th className="pb-2 text-right">月間検索数</th>
+                        <th className="pb-2">競合性</th>
+                        <th className="pb-2">出所・理由</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(suggestions ?? []).map((sg) => (
+                        <tr key={sg.id}>
+                          <td className="py-1.5">
+                            <input type="checkbox" name="ids" value={sg.id} />
+                          </td>
+                          <td className="py-1.5 font-medium">{sg.keyword}</td>
+                          <td className="py-1.5 text-right tabular-nums">{fmtVolume(sg.search_volume)}</td>
+                          <td className="py-1.5 text-slate-600">{COMPETITION_LABEL[sg.competition] ?? "—"}</td>
+                          <td className="py-1.5 text-slate-500">
+                            {sg.source === "dataforseo" ? "関連KW" : "AI提案"}
+                            {sg.reason ? `／${sg.reason}` : ""}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <SubmitButton variant="accent">チェックしたKWを追加</SubmitButton>
+                  <button formAction={dismissKeywordSuggestions} className={btnSmall}>
+                    チェックした候補を見送る
+                  </button>
+                </div>
+              </form>
+            )}
           </Card>
 
           <Card title="キーワード一覧" desc="収集の実行単位。定点観測の履歴もここに紐づきます">
@@ -245,6 +343,8 @@ export default async function CampaignDetail({
                 <thead>
                   <tr className="text-left text-[11px] text-slate-500">
                     <th className="pb-2">キーワード</th>
+                    <th className="pb-2 text-right">月間検索数</th>
+                    <th className="pb-2">競合性</th>
                     <th className="pb-2 text-right">収集回数</th>
                     <th className="pb-2">最終収集</th>
                     <th className="pb-2"></th>
@@ -260,6 +360,8 @@ export default async function CampaignDetail({
                     return (
                       <tr key={k.id}>
                         <td className="py-2 font-medium">{k.keyword}</td>
+                        <td className="py-2 text-right tabular-nums">{fmtVolume(k.search_volume)}</td>
+                        <td className="py-2 text-slate-600">{COMPETITION_LABEL[k.competition] ?? "—"}</td>
                         <td className="py-2 text-right">{snaps.length}</td>
                         <td className="py-2 text-slate-600">
                           {last ? new Date(last).toLocaleString("ja-JP") : "未収集"}

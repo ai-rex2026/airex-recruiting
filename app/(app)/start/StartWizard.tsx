@@ -8,11 +8,12 @@ import { documentStorageKey } from "@/lib/storage-key";
 import {
   proposeCampaignFromInput,
   createCampaignFromDraft,
+  lookupKeywordVolumes,
   type CampaignDraft,
   type RunnableJob,
 } from "@/app/start-actions";
 
-type KwRow = { keyword: string; priority: number; checked: boolean };
+type KwRow = { keyword: string; priority: number; checked: boolean; search_volume?: number | null };
 
 /**
  * かんたん開始ウィザード（Step1: 入力 → Step2: 確認・作成）。
@@ -40,6 +41,43 @@ export default function StartWizard({
   // Step2
   const [draft, setDraft] = useState<CampaignDraft | null>(null);
   const [kws, setKws] = useState<KwRow[]>([]);
+  const [kwInput, setKwInput] = useState("");
+
+  /** 手入力のKWを追加する。件数の上限は設けない（改行・読点でまとめて貼れる） */
+  const addKws = () => {
+    const added = kwInput
+      .split(/[\n,、]/)
+      .map((x) => x.trim())
+      .filter(Boolean);
+    if (!added.length) return;
+    setKws((prev) => {
+      const known = new Set(prev.map((k) => k.keyword.toLowerCase()));
+      const fresh = added
+        .filter((k) => !known.has(k.toLowerCase()))
+        .map((keyword) => ({ keyword, priority: 3, checked: true, search_volume: null }));
+      return [...prev, ...fresh];
+    });
+    setKwInput("");
+    void fillVolumes(added);
+  };
+
+  /** 追加・抽出したKWの検索ボリュームを後追いで埋める（取れなくても収集は続けられる） */
+  const fillVolumes = async (targets: string[]) => {
+    if (!targets.length) return;
+    try {
+      const map = await lookupKeywordVolumes(targets);
+      if (!Object.keys(map).length) return;
+      setKws((prev) =>
+        prev.map((k) =>
+          k.search_volume == null && k.keyword.toLowerCase() in map
+            ? { ...k, search_volume: map[k.keyword.toLowerCase()] }
+            : k
+        )
+      );
+    } catch {
+      // ボリュームは補助情報。取れなくてもウィザードは止めない
+    }
+  };
 
   /**
    * 案件資料から作る。LPには載らない報酬条件・承認条件・NG層まで読めるので、
@@ -99,7 +137,8 @@ export default function StartWizard({
         document_id: reg.id,
       });
       setDocName(file.name);
-      setKws(kwList.map((k) => ({ keyword: k.keyword, priority: k.priority, checked: true })));
+      setKws(kwList.map((k) => ({ keyword: k.keyword, priority: k.priority, checked: true, search_volume: null })));
+      void fillVolumes(kwList.map((k) => k.keyword));
       setStep(2);
     } catch (e) {
       setError(e instanceof Error ? e.message : "資料の読み取りに失敗しました。");
@@ -127,7 +166,7 @@ export default function StartWizard({
       }
       setDraft(res.draft);
       setNote(res.note ?? null);
-      setKws(res.draft.keywords.map((k) => ({ keyword: k.keyword, priority: k.priority, checked: true })));
+      setKws(res.draft.keywords.map((k) => ({ keyword: k.keyword, priority: k.priority, checked: true, search_volume: k.search_volume ?? null })));
       setStep(2);
     } catch (e) {
       setError(e instanceof Error ? e.message : "分析に失敗しました。もう一度お試しください。");
@@ -342,8 +381,31 @@ export default function StartWizard({
             </div>
 
             <div className="mt-5">
-              <label className={labelCls}>収集するキーワード（チェックした分だけ自動収集します）</label>
-              <ul className="mt-1 grid gap-1.5 md:grid-cols-2">
+              <div className="flex flex-wrap items-baseline gap-2">
+                <label className={labelCls}>
+                  収集するキーワード（チェックした分だけ自動収集します）
+                </label>
+                <span className="text-[11px] text-slate-400">
+                  {kws.filter((k) => k.checked).length}/{kws.length}件を選択中
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setKws((prev) => prev.map((x) => ({ ...x, checked: true })))}
+                  disabled={busy}
+                  className="text-[11px] text-sky-700 underline"
+                >
+                  全選択
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setKws((prev) => prev.map((x) => ({ ...x, checked: false })))}
+                  disabled={busy}
+                  className="text-[11px] text-sky-700 underline"
+                >
+                  全解除
+                </button>
+              </div>
+              <ul className="mt-1 grid max-h-72 gap-1.5 overflow-y-auto md:grid-cols-2">
                 {kws.map((k, i) => (
                   <li key={i} className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2">
                     <input
@@ -355,10 +417,31 @@ export default function StartWizard({
                       disabled={busy}
                     />
                     <span className="text-sm text-slate-800">{k.keyword}</span>
-                    <span className="ml-auto text-[10px] text-slate-400">優先度{k.priority}</span>
+                    <span className="ml-auto whitespace-nowrap text-[10px] text-slate-500">
+                      {k.search_volume == null ? "月間 —" : `月間 ${k.search_volume.toLocaleString("ja-JP")}`}
+                    </span>
                   </li>
                 ))}
               </ul>
+
+              <div className="mt-2 flex gap-2">
+                <input
+                  value={kwInput}
+                  onChange={(e) => setKwInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addKws();
+                    }
+                  }}
+                  disabled={busy}
+                  className={inputCls}
+                  placeholder="キーワードを自分で追加（改行・読点でまとめて貼り付けも可／上限なし）"
+                />
+                <button type="button" onClick={addKws} disabled={busy} className={btnGhost}>
+                  追加
+                </button>
+              </div>
             </div>
 
             <div className="mt-5 flex flex-wrap items-center gap-3">

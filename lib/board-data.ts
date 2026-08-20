@@ -14,15 +14,28 @@ export type ArticleKind = "ランキング/比較" | "非該当" | "";
  */
 export type SlotKind = "順位あり" | "順位なし" | "枠なし" | "";
 
+/**
+ * 検索結果の枠。paid = スポンサー広告（お金を払って出している枠）／organic = 通常の検索結果。
+ * 打診の意味が変わる（広告枠に出しているランキングサイトは自前で集客している）ので必ず区別する。
+ */
+export type ResultType = "paid" | "organic" | "";
+
+export const RESULT_TYPE_LABEL: Record<string, string> = {
+  paid: "スポンサー広告",
+  organic: "オーガニック",
+};
+
 /** 出力先グループ。xlsx ではシート、画面では表のセクションに対応する */
-export type BoardGroup = "ranking" | "other" | "candidate";
+export type BoardGroup = "ranking" | "sponsored" | "other" | "candidate";
 
 /** 陣取りボード1行 ＝ 運用エクセルの1行（KW × 記事） */
 export type BoardRow = {
   no: number;
   date: string; // 日付（収集日）
   keyword: string; // KW
-  rank: number | null; // 検索順位
+  rank: number | null; // 検索順位（スポンサー広告なら広告枠内の順番）
+  resultType: ResultType; // 検索枠（スポンサー広告／オーガニック）
+  resultTypeLabel: string;
   entryId: string;
   mediaId: string | null;
   mediaName: string; // サイト名
@@ -59,6 +72,7 @@ export const EXCEL_COLUMNS: { key: string; label: string; width: number }[] = [
   { key: "date", label: "日付", width: 12 },
   { key: "keyword", label: "KW", width: 22 },
   { key: "rank", label: "順位", width: 6 },
+  { key: "resultType", label: "検索枠", width: 14 },
   { key: "site", label: "サイト名", width: 20 },
   { key: "url", label: "サイトURL", width: 42 },
   { key: "listed", label: "掲載有無", width: 10 },
@@ -84,6 +98,11 @@ export const BOARD_GROUPS: { id: BoardGroup; sheet: string; desc: string }[] = [
     id: "ranking",
     sheet: "ランキング記事",
     desc: "順位が付いているランキング/比較記事。1位〜10位が陣取りの本命",
+  },
+  {
+    id: "sponsored",
+    sheet: "スポンサー広告",
+    desc: "検索結果の広告枠（スポンサー広告）に出ていたサイト。オーガニックとは別枠で、広告費をかけて露出している",
   },
   {
     id: "other",
@@ -219,6 +238,7 @@ type EntryRow = {
   article_url: string;
   article_title: string;
   is_ranking_article: boolean;
+  result_type: string | null;
   own_listed: boolean;
   own_rank_in_article: number | null;
   media: MediaRow | null;
@@ -323,7 +343,7 @@ export async function buildBoardData(sb: Sb, campaignId: string) {
     ? await sb
         .from("serp_entries")
         .select(
-          `id, snapshot_id, media_id, rank, article_url, article_title, is_ranking_article, own_listed, own_rank_in_article, media:media(${MEDIA_COLS})`
+          `id, snapshot_id, media_id, rank, article_url, article_title, is_ranking_article, result_type, own_listed, own_rank_in_article, media:media(${MEDIA_COLS})`
         )
         .in("snapshot_id", snapIds)
         .order("rank", { ascending: true, nullsFirst: false })
@@ -376,11 +396,14 @@ export async function buildBoardData(sb: Sb, campaignId: string) {
       const listings = listByEntry.get(e.id) ?? [];
       const { top, overflow, slotKind } = toSlots(listings);
       const articleKind: ArticleKind = e.is_ranking_article ? "ランキング/比較" : "非該当";
+      const resultType: ResultType = e.result_type === "paid" ? "paid" : "organic";
       rows.push({
         no: 0, // グループごとに採番するので後で振り直す
         date: fmtDate(snap?.collected_at),
         keyword: k.keyword,
         rank: e.rank,
+        resultType,
+        resultTypeLabel: RESULT_TYPE_LABEL[resultType] ?? "",
         entryId: e.id,
         mediaId: m?.id ?? null,
         mediaName: m?.name || m?.domain || "",
@@ -398,8 +421,14 @@ export async function buildBoardData(sb: Sb, campaignId: string) {
         mediaNote: mediaNoteOf(m, t?.negotiation_note),
         top,
         overflow,
-        // 順位が付いたランキング記事だけが陣取りの本命。それ以外は別シートへ回す
-        group: articleKind === "ランキング/比較" && slotKind === "順位あり" ? "ranking" : "other",
+        // スポンサー広告は「お金で買った枠」なのでオーガニックと混ぜず必ず別シートに分ける。
+        // 残りは、順位が付いたランキング記事だけが陣取りの本命で、それ以外は別シートへ回す
+        group:
+          resultType === "paid"
+            ? "sponsored"
+            : articleKind === "ランキング/比較" && slotKind === "順位あり"
+              ? "ranking"
+              : "other",
       });
     }
   }
@@ -413,6 +442,8 @@ export async function buildBoardData(sb: Sb, campaignId: string) {
       date: "",
       keyword: "",
       rank: null,
+      resultType: "",
+      resultTypeLabel: "",
       entryId: `candidate-${t.media_id}`,
       mediaId: t.media_id,
       mediaName: m?.name || m?.domain || "",
@@ -451,6 +482,7 @@ export function rowToCells(r: BoardRow): (string | number | null)[] {
     r.date,
     r.keyword,
     r.rank,
+    r.resultTypeLabel,
     r.mediaName,
     r.articleUrl,
     r.group === "candidate" ? "" : r.listed ? "あり" : "なし",

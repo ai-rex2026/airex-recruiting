@@ -18,6 +18,7 @@ export type JobInfo = {
   status: "pending" | "running" | "done" | "error";
   found: number;
   ranking: number;
+  paid: number;
   error: string;
   started_at: string | null;
   finished_at: string | null;
@@ -37,6 +38,7 @@ type Overlay = {
   state: "queued" | "running" | "enriching" | "done" | "error";
   found?: number;
   ranking?: number;
+  paid?: number;
   error?: string;
   enrichDone?: number;
   enrichTotal?: number;
@@ -122,6 +124,7 @@ export default function CampaignJobs({
                   state: "enriching",
                   found: r.found,
                   ranking: r.ranking_articles,
+                  paid: r.paid,
                   enrichDone: i,
                   enrichTotal,
                 });
@@ -140,6 +143,7 @@ export default function CampaignJobs({
             state: "done",
             found: r.found,
             ranking: r.ranking_articles,
+            paid: r.paid,
             enrichOk,
             enrichTotal,
           });
@@ -282,6 +286,7 @@ export default function CampaignJobs({
             const s = effectiveStatus(row, ov);
             const found = ov?.found ?? row.job?.found ?? 0;
             const ranking = ov?.ranking ?? row.job?.ranking ?? 0;
+            const paid = ov?.paid ?? row.job?.paid ?? 0;
             const errText = ov?.error ?? row.job?.error ?? "";
             return (
               <tr key={row.keyword_id}>
@@ -297,7 +302,7 @@ export default function CampaignJobs({
                   )}
                   {s === "done" && (
                     <span className="text-xs text-emerald-700">
-                      ✅完了 {found}件（うちランキング{ranking}件）
+                      ✅完了 {found}件（うちランキング{ranking}件・スポンサー広告{paid}件）
                       {ov?.enrichTotal ? `／本文読取: ${ov.enrichOk ?? 0}/${ov.enrichTotal}件` : ""}
                     </span>
                   )}

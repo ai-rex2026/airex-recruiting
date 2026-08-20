@@ -15,6 +15,7 @@ import {
   type EnrichableEntry,
 } from "@/lib/collect-core";
 import { safeUrl } from "@/lib/domain";
+import { hasDataForSeo, fetchSearchVolume } from "@/lib/dataforseo";
 
 /**
  * 「かんたん開始」ウィザード用のサーバーアクション。
@@ -124,7 +125,7 @@ export type CampaignDraft = {
   product_name: string;
   selling_points: string;
   conversion_point: string;
-  keywords: { keyword: string; priority: 1 | 2 | 3 }[];
+  keywords: { keyword: string; priority: 1 | 2 | 3; search_volume?: number | null }[];
   /** 資料から作った場合のみ埋まる（LPからは読み取れない取引条件・ターゲット定義） */
   genre?: string;
   lp_url?: string;
@@ -204,7 +205,7 @@ export async function proposeCampaignFromInput(formData: FormData): Promise<Prop
 - product_name: 商材・サービス名
 - selling_points: 訴求ポイント・信用点（箇条書きを「／」区切りの1行に）
 - conversion_point: 想定される成果地点（例: 無料相談申込、資料請求、購入。読み取れなければ妥当な推定）
-- keywords: 見込み客が検索しそうな日本語キーワードを8〜12個。検索結果に「ランキング／比較／おすすめ」記事が並びやすい語を優先し、「〇〇 おすすめ」「〇〇 比較」「〇〇 ランキング」型を必ず含める。priority は 1（最優先）〜3。`,
+- keywords: 見込み客が検索しそうな日本語キーワードを15〜25個。検索結果に「ランキング／比較／おすすめ」記事が並びやすい語を優先し、「〇〇 おすすめ」「〇〇 比較」「〇〇 ランキング」型を必ず含める。priority は 1（最優先）〜3。`,
     `以下の商材について案件ドラフトを作成してください。
 
 ${material}
@@ -229,14 +230,35 @@ ${material}
         keyword: String(k?.keyword || "").trim(),
         priority: ([1, 2, 3].includes(Number(k?.priority)) ? Number(k?.priority) : 3) as 1 | 2 | 3,
       }))
-      .filter((k) => k.keyword)
-      .slice(0, 12),
+      .filter((k) => k.keyword),
   };
   if (!draft.keywords.length) {
     return { ok: false, error: "キーワードを提案できませんでした。テキストを追加してもう一度お試しください。" };
   }
 
+  // 提案の時点で検索ボリュームを見せて、どのKWを収集対象にするかを選べるようにする
+  if (hasDataForSeo()) {
+    const vol = await fetchSearchVolume(draft.keywords.map((k) => k.keyword));
+    if (vol.ok) {
+      const byKw = new Map(vol.volumes.map((v) => [v.keyword.toLowerCase(), v.search_volume]));
+      draft.keywords = draft.keywords
+        .map((k) => ({ ...k, search_volume: byKw.get(k.keyword.toLowerCase()) ?? null }))
+        .sort((a, b) => (b.search_volume ?? -1) - (a.search_volume ?? -1));
+    }
+  }
+
   return { ok: true, draft, input_url: inputUrl, note };
+}
+
+/** ウィザード上のKWリストに検索ボリュームを付ける（DataForSEO 未設定なら空を返す） */
+export async function lookupKeywordVolumes(keywords: string[]): Promise<Record<string, number | null>> {
+  await ctx();
+  if (!hasDataForSeo() || !keywords.length) return {};
+  const res = await fetchSearchVolume(keywords);
+  if (!res.ok) return {};
+  const out: Record<string, number | null> = {};
+  for (const v of res.volumes) out[v.keyword.toLowerCase()] = v.search_volume;
+  return out;
 }
 
 /* ============ Step 2: ドラフト確定 → 案件・KW作成（＋収集ジョブ登録） ============ */
@@ -272,8 +294,7 @@ export async function createCampaignFromDraft(payload: {
       keyword: String(k.keyword || "").trim(),
       priority: [1, 2, 3].includes(Number(k.priority)) ? Number(k.priority) : 3,
     }))
-    .filter((k) => k.keyword)
-    .slice(0, 30);
+    .filter((k) => k.keyword);
   if (!keywords.length) return { ok: false, error: "キーワードを1つ以上選択してください。" };
 
   // クライアントを名前で名寄せ（既存があれば再利用）
@@ -323,15 +344,31 @@ export async function createCampaignFromDraft(payload: {
     await sb.from("documents").update({ campaign_id: camp.id }).eq("id", payload.document_id);
   }
 
+  // 検索ボリュームは登録時に一度引いておく（以後は案件詳細の「ボリュームを取り直す」で更新）
+  const volumeByKw = new Map<string, { search_volume: number | null; cpc: number | null; competition: string }>();
+  if (hasDataForSeo()) {
+    const vol = await fetchSearchVolume(keywords.map((k) => k.keyword));
+    if (vol.ok) for (const v of vol.volumes) volumeByKw.set(v.keyword.toLowerCase(), v);
+  }
+  const volumeFetchedAt = volumeByKw.size ? new Date().toISOString() : null;
+
   const { data: kwRows, error: kwErr } = await sb
     .from("keywords")
     .insert(
-      keywords.map((k) => ({
-        tenant_id: profile.tenant_id,
-        campaign_id: camp.id,
-        keyword: k.keyword,
-        priority: k.priority,
-      }))
+      keywords.map((k) => {
+        const v = volumeByKw.get(k.keyword.toLowerCase());
+        return {
+          tenant_id: profile.tenant_id,
+          campaign_id: camp.id,
+          keyword: k.keyword,
+          priority: k.priority,
+          search_volume: v?.search_volume ?? null,
+          cpc: v?.cpc ?? null,
+          competition: v?.competition ?? "",
+          volume_source: v ? "dataforseo" : "",
+          volume_updated_at: v ? volumeFetchedAt : null,
+        };
+      })
     )
     .select("id, keyword");
   if (kwErr) return { ok: false, error: `キーワードの登録に失敗しました：${kwErr.message}` };

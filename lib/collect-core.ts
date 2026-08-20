@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { createClient } from "@/lib/supabase/server";
 import { askJson, hasAnthropic } from "@/lib/anthropic";
 import { normalizeDomain, safeUrl } from "@/lib/domain";
+import { hasDataForSeo, fetchSerp, type SerpItem } from "@/lib/dataforseo";
 
 /**
  * 収集の中核。ブラウザのセッションに依存させないため、実行者（テナント・ユーザー）を引数で受け取る。
@@ -60,6 +61,8 @@ export async function audit(
 }
 
 type FoundSite = {
+  /** paid = スポンサー広告（赤枠） / organic = オーガニック検索（青枠） */
+  result_type: "paid" | "organic";
   rank: number | null;
   title: string;
   url: string;
@@ -72,7 +75,7 @@ type FoundSite = {
 };
 
 export type CollectAutoResult =
-  | { ok: true; job_id: string; snapshot_id: string; found: number; ranking_articles: number; media_new: number }
+  | { ok: true; job_id: string; snapshot_id: string; found: number; ranking_articles: number; paid: number; media_new: number }
   | { ok: false; error: string };
 
 /** running のまま3分を超えたジョブは中断とみなして引き継ぐ */
@@ -107,6 +110,147 @@ function extractLastJsonBlock<T>(text: string, anchor: string): T | null {
   const first = text.indexOf("{");
   if (first < 0) return null;
   return tryParse(text.slice(first, end + 1));
+}
+
+/**
+ * DataForSEO の SERP（スポンサー広告＋オーガニック）を、ランキング/比較記事かどうかで仕分ける。
+ * 掲載枠（記事内の商品と順位）はタイトル・説明文からは正確に読めないので、ここでは判定だけ行い、
+ * 中身は第2段階の本文読取（runEnrichEntry）に任せる。
+ * AI の応答を解析できなければ空配列を返し、呼び出し側は Web検索へフォールバックする。
+ */
+async function judgeSerpItems(
+  camp: { product_name?: string; name?: string; selling_points?: string },
+  keyword: string,
+  items: SerpItem[]
+): Promise<FoundSite[]> {
+  const productName = camp.product_name || camp.name || "";
+  const list = items.slice(0, 30);
+  const table = list
+    .map(
+      (it, i) =>
+        `${i}\t${it.result_type === "paid" ? "スポンサー広告" : "オーガニック"}${it.rank}位\t${it.title}\t${it.url}\t${it.description.slice(0, 200)}`
+    )
+    .join("\n");
+
+  const out = await askJson<{
+    results: { index: number; is_ranking_article: boolean; site_name: string; reason: string; own_listed: boolean }[];
+  }>(
+    `あなたは日本のアフィリエイト広告代理店のリサーチ担当です。Google の検索結果（スポンサー広告枠とオーガニック枠の両方）を1件ずつ見て、「ランキング/比較記事（アフィリエイトメディア）」かどうかを判定します。
+判定基準:
+- ランキング/比較記事 = 複数のサービス・商品を順位付け・比較して紹介している第三者メディアの記事
+- 該当しない例: サービス公式サイト・公式LP、ニュース記事、SNS、ECモール、口コミ投稿単体、予約ポータルの検索結果ページ
+- スポンサー広告枠であっても、遷移先がランキング/比較記事なら is_ranking_article = true とする（広告出稿しているランキングサイトは打診対象になる）
+- own_listed はタイトル・説明文から読み取れる範囲で判定し、確証がなければ false`,
+    `対象商材: ${productName}（訴求: ${camp.selling_points || "—"}）
+検索キーワード: ${keyword}
+
+以下は検索結果です（列: 通し番号 / 枠と順位 / タイトル / URL / 説明文）。
+---
+${table}
+---
+
+各行について、通し番号 index を必ず添えて出力してください。
+出力形式（STRICT JSON のみ）:
+{"results":[{"index":0,"is_ranking_article":true,"site_name":"サイト名","reason":"判定理由を20字程度で","own_listed":false}]}`,
+    8000
+  );
+
+  if (!out?.results?.length) return [];
+
+  const byIndex = new Map(out.results.map((r) => [Number(r?.index), r]));
+  return list.map((it, i) => {
+    const j = byIndex.get(i);
+    return {
+      result_type: it.result_type,
+      rank: it.rank,
+      title: it.title,
+      url: it.url,
+      site_name: j?.site_name || it.domain,
+      is_ranking_article: !!j?.is_ranking_article,
+      reason: j?.reason || "AI未判定",
+      listed_services: [],
+      own_listed: !!j?.own_listed,
+      own_position: null,
+    };
+  });
+}
+
+/**
+ * フォールバックの収集経路：Claude の Web検索ツールで検索上位のランキング/比較記事を探す。
+ * Google の広告枠（スポンサー広告）は返らないため、この経路の結果はすべて organic 扱いになる。
+ */
+async function searchViaWebSearchTool(
+  camp: { selling_points?: string },
+  keyword: string,
+  productName: string
+): Promise<{ ok: true; sites: FoundSite[] } | { ok: false; error: string }> {
+  const prompt = `日本語のWebを検索して、検索キーワード「${keyword}」の検索上位に出てくる「ランキング／比較／おすすめ」形式の記事・サイトを特定してください。
+- 対象: 複数のサービス・商品を順位付け・比較して紹介している第三者メディアの記事
+- 除外: サービス公式サイト・公式LP、ECモールの商品ページ、単なるニュース記事、SNS
+- 最大12件
+- own_listed = 対象商材「${productName}」（訴求: ${camp.selling_points || "—"}）がその記事内に掲載されているか
+- listed_services = 記事内に掲載されている商品・サービス名。次のルールに厳密に従うこと:
+  - 記事に明確な順位付きランキングがある場合: position を 1..N として上位から最大10件
+  - 順位のないリスト・言及のみの場合: 特定できる商品・サービス名をすべて（最大15件）、position はすべて null
+  - 商品・サービス名を特定できない場合: 空配列 [] を返す
+  - 「情報不足のため特定不可」「不明」などのプレースホルダ文字列を name に入れてはならない（実在の商品・サービス名のみ）
+
+検索・確認が終わったら、最後に STRICT JSON のみを出力してください（前置き・コードフェンス不要）:
+{"sites":[{"rank":1,"title":"...","url":"https://...","site_name":"...","is_ranking_article":true,"reason":"判定理由を20字程度で","listed_services":[{"position":1,"name":"..."}],"own_listed":false,"own_position":null}]}`;
+
+  try {
+    const anthropic = anthropicClient();
+    // ウォッチドッグ：Web検索が長引いてもアクションが黙って死なないよう、約120秒で打ち切って
+    // ジョブに error を記録する（Vercel の maxDuration=180 秒より手前で確実に着地させる）。
+    const WATCHDOG_MS = 120 * 1000;
+    let watchdogTimer: ReturnType<typeof setTimeout> | undefined;
+    const watchdog = new Promise<never>((_, reject) => {
+      watchdogTimer = setTimeout(() => reject(new Error("COLLECT_WATCHDOG_TIMEOUT")), WATCHDOG_MS);
+    });
+    let res;
+    try {
+      res = await Promise.race([
+        anthropic.messages.create({
+          model: MODEL,
+          max_tokens: 4000,
+          tools: [
+            {
+              type: "web_search_20250305",
+              name: "web_search",
+              max_uses: 3,
+              // サーバーのリージョンに関わらず、日本ロケーションとして検索を安定させる
+              user_location: { type: "approximate", country: "JP", city: "Tokyo", timezone: "Asia/Tokyo" },
+            },
+          ],
+          messages: [{ role: "user", content: prompt }],
+        }),
+        watchdog,
+      ]);
+    } finally {
+      clearTimeout(watchdogTimer);
+    }
+    const text = res.content.map((b) => (b.type === "text" ? b.text : "")).join("\n");
+    const parsed = extractLastJsonBlock<{ sites: Omit<FoundSite, "result_type">[] }>(text, '"sites"');
+    const sites = (parsed?.sites ?? [])
+      .slice(0, 12)
+      .map((x) => ({ ...x, result_type: "organic" as const }));
+    return { ok: true, sites };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes("COLLECT_WATCHDOG_TIMEOUT")) {
+      return { ok: false, error: "検索がタイムアウトしました。再収集してください。" };
+    }
+    if (/web_search|tool|not[_\s]?(available|enabled|supported)|permission/i.test(msg)) {
+      return {
+        ok: false,
+        error: "このAPIキーではWeb検索ツールが利用できないようです。案件情報・KWタブの貼り付け収集をご利用ください。",
+      };
+    }
+    return {
+      ok: false,
+      error: `自動検索に失敗しました（${msg.slice(0, 200)}）。再収集で再試行するか、案件情報・KWタブの貼り付け収集をお試しください。`,
+    };
+  }
 }
 
 export async function runCollectJob(
@@ -168,70 +312,36 @@ export async function runCollectJob(
 
   const productName = camp.product_name || camp.name || "";
 
-  const prompt = `日本語のWebを検索して、検索キーワード「${kw.keyword}」の検索上位に出てくる「ランキング／比較／おすすめ」形式の記事・サイトを特定してください。
-- 対象: 複数のサービス・商品を順位付け・比較して紹介している第三者メディアの記事
-- 除外: サービス公式サイト・公式LP、ECモールの商品ページ、単なるニュース記事、SNS
-- 最大12件
-- own_listed = 対象商材「${productName}」（訴求: ${camp.selling_points || "—"}）がその記事内に掲載されているか
-- listed_services = 記事内に掲載されている商品・サービス名。次のルールに厳密に従うこと:
-  - 記事に明確な順位付きランキングがある場合: position を 1..N として上位から最大10件
-  - 順位のないリスト・言及のみの場合: 特定できる商品・サービス名をすべて（最大15件）、position はすべて null
-  - 商品・サービス名を特定できない場合: 空配列 [] を返す
-  - 「情報不足のため特定不可」「不明」などのプレースホルダ文字列を name に入れてはならない（実在の商品・サービス名のみ）
-
-検索・確認が終わったら、最後に STRICT JSON のみを出力してください（前置き・コードフェンス不要）:
-{"sites":[{"rank":1,"title":"...","url":"https://...","site_name":"...","is_ranking_article":true,"reason":"判定理由を20字程度で","listed_services":[{"position":1,"name":"..."}],"own_listed":false,"own_position":null}]}`;
-
   let sites: FoundSite[] = [];
-  try {
-    const anthropic = anthropicClient();
-    // ウォッチドッグ：Web検索が長引いてもアクションが黙って死なないよう、約120秒で打ち切って
-    // ジョブに error を記録する（Vercel の maxDuration=180 秒より手前で確実に着地させる）。
-    const WATCHDOG_MS = 120 * 1000;
-    let watchdogTimer: ReturnType<typeof setTimeout> | undefined;
-    const watchdog = new Promise<never>((_, reject) => {
-      watchdogTimer = setTimeout(() => reject(new Error("COLLECT_WATCHDOG_TIMEOUT")), WATCHDOG_MS);
-    });
-    let res;
-    try {
-      res = await Promise.race([
-        anthropic.messages.create({
-          model: MODEL,
-          max_tokens: 4000,
-          tools: [
-            {
-              type: "web_search_20250305",
-              name: "web_search",
-              max_uses: 3,
-              // サーバーのリージョンに関わらず、日本ロケーションとして検索を安定させる
-              user_location: { type: "approximate", country: "JP", city: "Tokyo", timezone: "Asia/Tokyo" },
-            },
-          ],
-          messages: [{ role: "user", content: prompt }],
-        }),
-        watchdog,
-      ]);
-    } finally {
-      clearTimeout(watchdogTimer);
+  // 収集元。DataForSEO が使えるときは Google の実SERP（スポンサー広告つき）、無ければ Claude の Web検索
+  let source: "dataforseo" | "ai_web_search" = "ai_web_search";
+  let serpNote = "";
+
+  // ① DataForSEO：スポンサー広告（赤枠）とオーガニック（青枠）を分けて取得できるのはこの経路だけ
+  if (hasDataForSeo()) {
+    const serp = await fetchSerp(kw.keyword, 20);
+    if (!serp.ok) {
+      serpNote = serp.error;
+    } else if (serp.items.length) {
+      sites = await judgeSerpItems(camp, kw.keyword, serp.items);
+      if (sites.length) source = "dataforseo";
     }
-    const text = res.content
-      .map((b) => (b.type === "text" ? b.text : ""))
-      .join("\n");
-    const parsed = extractLastJsonBlock<{ sites: FoundSite[] }>(text, '"sites"');
-    sites = (parsed?.sites ?? []).slice(0, 12);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    if (msg.includes("COLLECT_WATCHDOG_TIMEOUT")) {
-      return fail("検索がタイムアウトしました。再収集してください。");
-    }
-    if (/web_search|tool|not[_\s]?(available|enabled|supported)|permission/i.test(msg)) {
-      return fail("このAPIキーではWeb検索ツールが利用できないようです。案件情報・KWタブの貼り付け収集をご利用ください。");
-    }
-    return fail(`自動検索に失敗しました（${msg.slice(0, 200)}）。再収集で再試行するか、案件情報・KWタブの貼り付け収集をお試しください。`);
+    // 取得できなければ②へフォールバックする（その回だけ広告枠が拾えない）
+  }
+
+  // ② フォールバック：Claude の Web検索ツール。広告枠は返らないので全件オーガニック扱い
+  if (!sites.length) {
+    const ws = await searchViaWebSearchTool(camp, kw.keyword, productName);
+    if (!ws.ok) return fail(serpNote ? `${ws.error}（DataForSEO: ${serpNote}）` : ws.error);
+    sites = ws.sites;
   }
 
   if (!sites.length) {
-    return fail("検索結果からランキング/比較記事を特定できませんでした。再収集で再試行するか、案件情報・KWタブの貼り付け収集をお試しください。");
+    return fail(
+      serpNote
+        ? `検索結果からランキング/比較記事を特定できませんでした（DataForSEO: ${serpNote}）。`
+        : "検索結果からランキング/比較記事を特定できませんでした。再収集で再試行するか、案件情報・KWタブの貼り付け収集をお試しください。"
+    );
   }
 
   // ===== 永続化（ingestCollection と同じ流れ）=====
@@ -240,7 +350,7 @@ export async function runCollectJob(
     .insert({
       tenant_id: profile.tenant_id,
       keyword_id: keywordId,
-      source: "ai_web_search",
+      source,
       created_by: profile.id,
     })
     .select("id")
@@ -260,12 +370,15 @@ export async function runCollectJob(
   let created = 0;
   let mediaNew = 0;
   let rankingArticles = 0;
+  let paidCount = 0;
 
   for (let i = 0; i < sites.length; i++) {
     const r = sites[i];
     const url = safeUrl(String(r.url || ""));
     const domain = normalizeDomain(url);
     if (!domain) continue;
+    const resultType = r.result_type === "paid" ? "paid" : "organic";
+    if (resultType === "paid") paidCount++;
 
     // メディアを名寄せして upsert
     let { data: media } = await sb
@@ -299,6 +412,7 @@ export async function runCollectJob(
         snapshot_id: snap.id,
         media_id: media.id,
         rank: r.rank ?? i + 1,
+        result_type: resultType,
         article_url: url,
         article_title: r.title || "",
         is_ranking_article: !!r.is_ranking_article,
@@ -350,8 +464,10 @@ export async function runCollectJob(
     .from("collection_jobs")
     .update({
       status: "done",
+      source,
       found_count: sites.length,
       ranking_count: rankingArticles,
+      paid_count: paidCount,
       media_new: mediaNew,
       snapshot_id: snap.id,
       finished_at: new Date().toISOString(),
@@ -366,14 +482,22 @@ export async function runCollectJob(
     "collection",
     snap.id,
     "ingested",
-    `かんたん開始（AI Web検索） KW:${kw.keyword} / 取得${sites.length}件 / ランキング記事${rankingArticles}件 / 新規打診${created}件`
+    `収集（${source === "dataforseo" ? "SERP API" : "AI Web検索"}） KW:${kw.keyword} / 取得${sites.length}件（うちスポンサー広告${paidCount}件） / ランキング記事${rankingArticles}件 / 新規打診${created}件`
   );
   revalidatePath("/board");
   revalidatePath("/media");
   revalidatePath("/start");
   revalidatePath(`/campaigns/${campaignId}`);
 
-  return { ok: true, job_id: job.id, snapshot_id: snap.id, found: sites.length, ranking_articles: rankingArticles, media_new: mediaNew };
+  return {
+    ok: true,
+    job_id: job.id,
+    snapshot_id: snap.id,
+    found: sites.length,
+    ranking_articles: rankingArticles,
+    paid: paidCount,
+    media_new: mediaNew,
+  };
 }
 
 export type EnrichResult =

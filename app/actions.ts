@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { createClient, getSessionProfile } from "@/lib/supabase/server";
 import { askJson, askText, hasAnthropic } from "@/lib/anthropic";
 import { normalizeDomain, safeUrl, BLOCKING_RESULTS } from "@/lib/domain";
+import { hasDataForSeo, fetchSearchVolume, fetchKeywordIdeas } from "@/lib/dataforseo";
 
 type SB = Awaited<ReturnType<typeof createClient>>;
 
@@ -100,20 +101,67 @@ export async function createCampaign(formData: FormData) {
   if (camp) redirect(`/campaigns/${camp.id}`);
 }
 
-async function insertKeywords(sb: SB, tenantId: string, campaignId: string, raw: string) {
-  const rows = raw
-    .split(/[\n,、]/)
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .slice(0, 500)
-    .map((keyword) => ({ tenant_id: tenantId, campaign_id: campaignId, keyword }));
-  if (rows.length) await sb.from("keywords").insert(rows);
+/** DataForSEO で検索ボリュームを引き、keywords テーブルに入れる形にして返す（未設定なら空） */
+async function volumeMap(keywords: string[]) {
+  const m = new Map<
+    string,
+    { search_volume: number | null; cpc: number | null; competition: string; volume_source: string; volume_updated_at: string }
+  >();
+  if (!hasDataForSeo() || !keywords.length) return m;
+  const res = await fetchSearchVolume(keywords);
+  if (!res.ok) return m;
+  const now = new Date().toISOString();
+  for (const v of res.volumes) {
+    m.set(v.keyword.toLowerCase(), {
+      search_volume: v.search_volume,
+      cpc: v.cpc,
+      competition: v.competition,
+      volume_source: "dataforseo",
+      volume_updated_at: now,
+    });
+  }
+  return m;
+}
+
+/**
+ * キーワードをまとめて登録する。
+ * 件数の上限は設けない（KWの数＝調査の母数そのもので、どこまで広げるかは運用側の判断）。
+ * 同一案件内で既に登録済みのKWは無視し、DataForSEO が使えるときは登録と同時に検索ボリュームも引く。
+ */
+async function insertKeywords(sb: SB, tenantId: string, campaignId: string, raw: string): Promise<number> {
+  const input = Array.from(
+    new Set(
+      raw
+        .split(/[\n,、]/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+    )
+  );
+  if (!input.length) return 0;
+
+  const { data: existing } = await sb.from("keywords").select("keyword").eq("campaign_id", campaignId);
+  const known = new Set((existing ?? []).map((k) => String(k.keyword).toLowerCase()));
+  const fresh = input.filter((k) => !known.has(k.toLowerCase()));
+  if (!fresh.length) return 0;
+
+  const volumes = await volumeMap(fresh);
+  await sb.from("keywords").insert(
+    fresh.map((keyword) => ({
+      tenant_id: tenantId,
+      campaign_id: campaignId,
+      keyword,
+      ...(volumes.get(keyword.toLowerCase()) ?? {}),
+    }))
+  );
+  return fresh.length;
 }
 
 export async function addKeywords(formData: FormData) {
   const { sb, profile } = await ctx();
   const campaignId = String(formData.get("campaign_id"));
-  await insertKeywords(sb, profile.tenant_id, campaignId, String(formData.get("keywords") || ""));
+  const added = await insertKeywords(sb, profile.tenant_id, campaignId, String(formData.get("keywords") || ""));
+  if (added)
+    await audit(sb, profile.tenant_id, profile.id, profile.full_name, "campaign", campaignId, "keywords_added", `${added}件`);
   revalidatePath(`/campaigns/${campaignId}`);
 }
 
@@ -125,25 +173,171 @@ export async function deleteKeyword(formData: FormData) {
   revalidatePath(`/campaigns/${campaignId}`);
 }
 
-export async function suggestKeywords(formData: FormData) {
+/* ============================ 検索ボリューム ============================ */
+
+/** 登録済みKWの検索ボリュームをまとめて取り直す（月次で見直す想定） */
+export async function refreshKeywordVolumes(formData: FormData) {
   const { sb, profile } = await ctx();
   const campaignId = String(formData.get("campaign_id"));
-  if (!hasAnthropic()) return;
+  if (!hasDataForSeo()) return;
+
+  const { data: kws } = await sb.from("keywords").select("id, keyword").eq("campaign_id", campaignId);
+  if (!kws?.length) return;
+
+  const res = await fetchSearchVolume(kws.map((k) => k.keyword));
+  if (!res.ok) return;
+
+  const byKw = new Map(res.volumes.map((v) => [v.keyword.toLowerCase(), v]));
+  const now = new Date().toISOString();
+  let updated = 0;
+  for (const k of kws) {
+    const v = byKw.get(String(k.keyword).toLowerCase());
+    if (!v) continue;
+    await sb
+      .from("keywords")
+      .update({
+        search_volume: v.search_volume,
+        cpc: v.cpc,
+        competition: v.competition,
+        volume_source: "dataforseo",
+        volume_updated_at: now,
+      })
+      .eq("id", k.id);
+    updated++;
+  }
+  await audit(sb, profile.tenant_id, profile.id, profile.full_name, "campaign", campaignId, "kw_volume_refreshed", `${updated}件`);
+  revalidatePath(`/campaigns/${campaignId}`);
+}
+
+/* ============================ KW候補の提案 ============================ */
+
+/**
+ * KW候補を出す。台帳には入れず keyword_suggestions に「候補」として積み、採用は人が選ぶ
+ * （マスタの書き換えは承認制、という原則に合わせている）。
+ * 候補は2系統：AI が商材から考えた語＋DataForSEO の関連キーワード（実ボリューム付き）。
+ */
+export async function suggestKeywordCandidates(formData: FormData) {
+  const { sb, profile } = await ctx();
+  const campaignId = String(formData.get("campaign_id"));
   const { data: camp } = await sb.from("campaigns").select("*").eq("id", campaignId).single();
   if (!camp) return;
-  const out = await askJson<{ keywords: string[] }>(
-    "あなたは日本のアフィリエイト広告の運用者です。指定された商材について、ランキング/比較メディアが上位表示されやすい検索キーワードを提案します。",
-    `商材: ${camp.product_name || camp.name}
+
+  const { data: kws } = await sb.from("keywords").select("keyword").eq("campaign_id", campaignId);
+  const registered = new Set((kws ?? []).map((k) => String(k.keyword).toLowerCase()));
+
+  const candidates = new Map<string, { keyword: string; source: string; reason: string }>();
+
+  // ① AI：商材から検索されそうな語を広めに出す
+  if (hasAnthropic()) {
+    const out = await askJson<{ keywords: { keyword: string; reason?: string }[] }>(
+      "あなたは日本のアフィリエイト広告の運用者です。指定された商材について、ランキング/比較メディアが上位表示されやすい検索キーワードを提案します。",
+      `商材: ${camp.product_name || camp.name}
+ジャンル: ${camp.genre || "—"}
 LP: ${camp.lp_url}
 成果地点: ${camp.conversion_point}
 訴求: ${camp.selling_points}
+すでに登録済みのKW（重複させない）: ${(kws ?? []).map((k) => k.keyword).join(" / ") || "なし"}
 
-この商材の掲載を狙うべき検索キーワードを日本語で12個、{"keywords":["..."]} の形式で出力してください。「おすすめ」「比較」「ランキング」など比較記事が上位に来る語を含めること。`
-  );
-  if (out?.keywords?.length) {
-    await insertKeywords(sb, profile.tenant_id, campaignId, out.keywords.join("\n"));
-    await audit(sb, profile.tenant_id, profile.id, profile.full_name, "campaign", campaignId, "ai_keywords", `${out.keywords.length}件`);
+この商材の掲載を狙うべき検索キーワードを日本語で30個提案してください。
+「おすすめ」「比較」「ランキング」「口コミ」など比較記事が上位に来る語に加えて、地域名・悩み・価格帯などの掛け合わせも含めること。
+{"keywords":[{"keyword":"...","reason":"狙う理由を15字程度で"}]} の形式で出力してください。`,
+      4000
+    );
+    for (const k of out?.keywords ?? []) {
+      const kw = String(k?.keyword || "").trim();
+      if (!kw || registered.has(kw.toLowerCase())) continue;
+      candidates.set(kw.toLowerCase(), { keyword: kw, source: "ai", reason: String(k?.reason || "") });
+    }
   }
+
+  // ② DataForSEO：登録済みKWをシードにした関連キーワード（検索ボリュームの大きい順）
+  if (hasDataForSeo()) {
+    const seeds = (kws ?? []).map((k) => k.keyword).slice(0, 20);
+    if (seeds.length) {
+      const ideas = await fetchKeywordIdeas(seeds, 60);
+      if (ideas.ok) {
+        for (const idea of ideas.ideas) {
+          const key = idea.keyword.toLowerCase();
+          if (registered.has(key)) continue;
+          candidates.set(key, { keyword: idea.keyword, source: "dataforseo", reason: "関連キーワード" });
+        }
+      }
+    }
+  }
+
+  if (!candidates.size) return;
+
+  // 候補の検索ボリュームを引いて、大きい順に並べられるようにする
+  const list = [...candidates.values()];
+  const volumes = await volumeMap(list.map((c) => c.keyword));
+
+  await sb.from("keyword_suggestions").upsert(
+    list.map((c) => {
+      const v = volumes.get(c.keyword.toLowerCase());
+      return {
+        tenant_id: profile.tenant_id,
+        campaign_id: campaignId,
+        keyword: c.keyword,
+        search_volume: v?.search_volume ?? null,
+        cpc: v?.cpc ?? null,
+        competition: v?.competition ?? "",
+        source: c.source,
+        reason: c.reason,
+        status: "suggested",
+      };
+    }),
+    { onConflict: "campaign_id,keyword", ignoreDuplicates: true }
+  );
+
+  await audit(sb, profile.tenant_id, profile.id, profile.full_name, "campaign", campaignId, "kw_suggested", `${list.length}件`);
+  revalidatePath(`/campaigns/${campaignId}`);
+}
+
+/** 候補から選んだKWを実際の収集対象（keywords）に採用する */
+export async function adoptKeywordSuggestions(formData: FormData) {
+  const { sb, profile } = await ctx();
+  const campaignId = String(formData.get("campaign_id"));
+  const ids = formData.getAll("ids").map(String).filter(Boolean);
+  if (!ids.length) return;
+
+  const { data: rows } = await sb
+    .from("keyword_suggestions")
+    .select("id, keyword, search_volume, cpc, competition")
+    .eq("campaign_id", campaignId)
+    .in("id", ids);
+  if (!rows?.length) return;
+
+  const { data: existing } = await sb.from("keywords").select("keyword").eq("campaign_id", campaignId);
+  const known = new Set((existing ?? []).map((k) => String(k.keyword).toLowerCase()));
+  const fresh = rows.filter((r) => !known.has(String(r.keyword).toLowerCase()));
+
+  if (fresh.length) {
+    const now = new Date().toISOString();
+    await sb.from("keywords").insert(
+      fresh.map((r) => ({
+        tenant_id: profile.tenant_id,
+        campaign_id: campaignId,
+        keyword: r.keyword,
+        search_volume: r.search_volume,
+        cpc: r.cpc,
+        competition: r.competition ?? "",
+        volume_source: r.search_volume == null ? "" : "dataforseo",
+        volume_updated_at: r.search_volume == null ? null : now,
+      }))
+    );
+  }
+  await sb.from("keyword_suggestions").update({ status: "adopted" }).in("id", ids);
+  await audit(sb, profile.tenant_id, profile.id, profile.full_name, "campaign", campaignId, "kw_adopted", `${fresh.length}件`);
+  revalidatePath(`/campaigns/${campaignId}`);
+}
+
+/** 採用しない候補を伏せる（次回の提案でも再表示しない） */
+export async function dismissKeywordSuggestions(formData: FormData) {
+  const { sb } = await ctx();
+  const campaignId = String(formData.get("campaign_id"));
+  const ids = formData.getAll("ids").map(String).filter(Boolean);
+  if (!ids.length) return;
+  await sb.from("keyword_suggestions").update({ status: "dismissed" }).in("id", ids);
   revalidatePath(`/campaigns/${campaignId}`);
 }
 
@@ -182,6 +376,8 @@ type AnalyzedRow = {
   url: string;
   title?: string;
   rank?: number;
+  /** paid = スポンサー広告（赤枠） / organic = オーガニック検索（青枠） */
+  result_type?: "paid" | "organic";
   is_ranking_article: boolean;
   reason: string;
   media_name?: string;
@@ -215,7 +411,8 @@ export async function ingestCollection(formData: FormData) {
 - ランキング/比較記事 = 複数のサービスを順位付け・比較して紹介している第三者メディアの記事
 - 該当しない例: サービス公式サイト、公式LP、ニュース記事、SNS、ECモール、口コミ投稿単体
 自社案件が記事内に掲載されているかどうかは、タイトル等から推測できる範囲で判定し、確証がなければ own_listed=false とする。
-competitors はタイトルから読み取れる範囲でよい（不明なら空配列）。`,
+competitors はタイトルから読み取れる範囲でよい（不明なら空配列）。
+result_type は検索結果の枠の種別で、"スポンサー" "広告" "Sponsored" "Ad" などの表示を伴う行、または「スポンサー広告」ブロックの中にある行を "paid"、通常の検索結果を "organic" とする。判断できなければ "organic"。`,
       `対象案件: ${camp.product_name || camp.name}（${camp.selling_points}）
 検索キーワード: ${kw.keyword}
 
@@ -225,7 +422,7 @@ ${lines.join("\n")}
 ---
 
 出力形式:
-{"results":[{"url":"https://...","title":"...","rank":1,"is_ranking_article":true,"reason":"判定理由を20字程度で","media_name":"サイト名","own_listed":false,"own_position":null,"competitors":[{"position":1,"service_name":"..."}]}]}`,
+{"results":[{"url":"https://...","title":"...","rank":1,"result_type":"organic","is_ranking_article":true,"reason":"判定理由を20字程度で","media_name":"サイト名","own_listed":false,"own_position":null,"competitors":[{"position":1,"service_name":"..."}]}]}`,
       8000
     );
     rows = out?.results ?? [];
@@ -306,6 +503,7 @@ ${lines.join("\n")}
         snapshot_id: snap.id,
         media_id: media.id,
         rank: r.rank ?? i + 1,
+        result_type: r.result_type === "paid" ? "paid" : "organic",
         article_url: url,
         article_title: r.title || "",
         is_ranking_article: !!r.is_ranking_article,

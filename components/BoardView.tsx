@@ -51,7 +51,7 @@ export default async function BoardView({ campaignId }: { campaignId: string }) 
   return (
     <Card
       title="陣取り表"
-      desc={`全 ${total} 行（自社掲載 ${placedCount} 件）／運用エクセルと同じ列並び。ダウンロードは下の3区分がそのままシートになります`}
+      desc={`全 ${total} 行（自社掲載 ${placedCount} 件）／運用エクセルと同じ列並び。ダウンロードは下の区分がそのままシートになります`}
       action={
         <div className="flex flex-wrap items-center justify-end gap-1.5">
           <a href={`${exportBase}&format=xlsx`} className={btnSmall}>
@@ -240,6 +240,21 @@ function BoardTable({ rows }: { rows: BoardRow[] }) {
                 </td>
                 <td className={`${cell} ${top} text-right tabular-nums font-bold text-[#1B2A4A]`}>
                   {r.rank ?? "—"}
+                </td>
+                <td className={`${cell} ${top} whitespace-nowrap`}>
+                  {r.resultType ? (
+                    <span
+                      className={`inline-flex items-center rounded border px-1.5 py-0.5 not-italic ${
+                        r.resultType === "paid"
+                          ? "border-orange-300 bg-orange-50 font-semibold text-orange-800"
+                          : "border-sky-200 bg-sky-50 text-sky-800"
+                      }`}
+                    >
+                      {r.resultTypeLabel}
+                    </span>
+                  ) : (
+                    <span className="text-slate-300">—</span>
+                  )}
                 </td>
                 <td className={`${cell} ${top}`}>
                   {r.mediaId ? (

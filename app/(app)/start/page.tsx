@@ -13,6 +13,7 @@ type JobRow = {
   status: "pending" | "running" | "done" | "error";
   found_count: number;
   ranking_count: number;
+  paid_count: number;
   error_detail: string;
   started_at: string | null;
   finished_at: string | null;
@@ -30,7 +31,7 @@ export default async function StartPage() {
     sb.from("keywords").select("id, campaign_id, keyword, created_at").order("created_at"),
     sb
       .from("collection_jobs")
-      .select("id, keyword_id, campaign_id, status, found_count, ranking_count, error_detail, started_at, finished_at, created_at")
+      .select("id, keyword_id, campaign_id, status, found_count, ranking_count, paid_count, error_detail, started_at, finished_at, created_at")
       .order("created_at", { ascending: false })
       .limit(2000),
   ]);
@@ -50,6 +51,7 @@ export default async function StartPage() {
               status: j.status,
               found: j.found_count ?? 0,
               ranking: j.ranking_count ?? 0,
+              paid: j.paid_count ?? 0,
               error: j.error_detail ?? "",
               started_at: j.started_at,
               finished_at: j.finished_at,

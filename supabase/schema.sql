@@ -387,3 +387,41 @@ create policy documents_objects_rw on storage.objects for all to authenticated
     bucket_id = 'documents'
     and (storage.foldername(name))[1] = current_tenant_id()::text
   );
+
+-- ============ 検索ボリューム / KW候補 / スポンサー広告（DataForSEO 連携） ============
+
+-- キーワードごとの月間検索ボリューム。DataForSEO（Google 広告のキーワードプランナー由来）で埋める
+alter table keywords add column if not exists search_volume     int;
+alter table keywords add column if not exists cpc               numeric;
+alter table keywords add column if not exists competition       text not null default '';
+alter table keywords add column if not exists volume_source     text not null default '';  -- dataforseo
+alter table keywords add column if not exists volume_updated_at timestamptz;
+
+-- 検索結果の区分。paid = スポンサー広告（赤枠） / organic = オーガニック検索（青枠）
+alter table serp_entries add column if not exists result_type text not null default 'organic';
+create index if not exists idx_entries_result_type on serp_entries(snapshot_id, result_type);
+
+-- 収集ジョブでスポンサー広告を何件拾ったか（found_count の内数）
+alter table collection_jobs add column if not exists paid_count int not null default 0;
+
+-- KW候補（採用前の提案。採用すると keywords へ移す）
+create table if not exists keyword_suggestions (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  campaign_id uuid not null references campaigns(id) on delete cascade,
+  keyword text not null,
+  search_volume int,
+  cpc numeric,
+  competition text not null default '',
+  source text not null default 'ai',   -- ai | dataforseo
+  reason text not null default '',
+  status text not null default 'suggested', -- suggested | adopted | dismissed
+  created_at timestamptz not null default now()
+);
+create unique index if not exists uq_kwsug_campaign_keyword on keyword_suggestions(campaign_id, keyword);
+create index if not exists idx_kwsug_campaign on keyword_suggestions(campaign_id, status, search_volume desc nulls last);
+
+alter table keyword_suggestions enable row level security;
+drop policy if exists keyword_suggestions_rw on keyword_suggestions;
+create policy keyword_suggestions_rw on keyword_suggestions for all to authenticated
+  using (tenant_id = current_tenant_id()) with check (tenant_id = current_tenant_id());
