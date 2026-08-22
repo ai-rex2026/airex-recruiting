@@ -425,3 +425,10 @@ alter table keyword_suggestions enable row level security;
 drop policy if exists keyword_suggestions_rw on keyword_suggestions;
 create policy keyword_suggestions_rw on keyword_suggestions for all to authenticated
   using (tenant_id = current_tenant_id()) with check (tenant_id = current_tenant_id());
+
+-- ============ 本文読取の重複排除 ============
+-- 記事本文の読取（runEnrichEntry）はこのアプリで最も高い処理なので、
+-- 「いつ読んだか」を持たせて同一案件・同一URL・直近の結果を引き写せるようにする。
+alter table serp_entries add column if not exists enriched_at timestamptz;
+-- 再利用の検索条件（記事URL × 読取済み）に効かせる
+create index if not exists idx_entries_reuse on serp_entries(article_url, enriched_at desc nulls last);

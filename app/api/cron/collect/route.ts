@@ -89,13 +89,17 @@ async function handle(req: NextRequest) {
 
       // 第2段階：記事本文から掲載枠を抽出する。時間が尽きたら残りは次の起動へ
       let enriched = 0;
+      let reused = 0;
       const le = await listEnrichable(sb, r.snapshot_id);
       if (le.ok) {
         for (const e of le.entries) {
           if (left() < 45_000) break;
           try {
             const er = await runEnrichEntry(sb, actor, e.entry_id);
-            if (er.ok) enriched++;
+            if (er.ok) {
+              enriched++;
+              if (er.reused) reused++;
+            }
           } catch {
             // 個別記事の失敗はジョブ全体を失敗にしない
           }
@@ -105,7 +109,7 @@ async function handle(req: NextRequest) {
         job_id: job.id,
         keyword_id: job.keyword_id,
         ok: true,
-        detail: `found=${r.found} ranking=${r.ranking_articles} enriched=${enriched}`,
+        detail: `found=${r.found} ranking=${r.ranking_articles} enriched=${enriched}(reused=${reused})`,
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : "unknown error";

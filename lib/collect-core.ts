@@ -501,7 +501,7 @@ export async function runCollectJob(
 }
 
 export type EnrichResult =
-  | { ok: true; found: number; own_listed: boolean }
+  | { ok: true; found: number; own_listed: boolean; reused?: boolean }
   | { ok: false; error: string };
 
 type EnrichedBody = {
@@ -516,10 +516,92 @@ type EnrichedBody = {
  * Web検索（SERPスニペット）だけでは読めない比較表・ランキング表を補完する第2段階。
  * 既存の article_listings は置き換える。取得失敗時は既存データに触れない。
  */
+/**
+ * 同一案件・同一記事URLの読取結果を使い回せる時間の窓。
+ * 検索KWが違っても上位に出てくるランキング記事はかなり重複するため、同じ日に同じ記事を
+ * 何度も取得・解析していた（実測で読取の約54%が重複）。同じ記事の同じ日なら結果は同じなので引き写す。
+ */
+const ENRICH_REUSE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/** judge_reason に付く読取マーカー（通常・再利用の両方）を落とす */
+function stripEnrichMarker(reason: string): string {
+  return String(reason || "")
+    .replace(/／?本文読取済\(\d{4}-\d{2}-\d{2}(?:・再利用)?\)/g, "")
+    .trim();
+}
+
+/** 打診対象（campaign×media）の kind を own_listed に合わせる。読取後に通る共通処理 */
+async function syncOutreachKind(
+  sb: SB,
+  campaignId: string,
+  mediaId: string | null,
+  ownListed: boolean
+) {
+  if (!campaignId || !mediaId) return;
+  const { data: target } = await sb
+    .from("outreach_targets")
+    .select("id, kind")
+    .eq("campaign_id", campaignId)
+    .eq("media_id", mediaId)
+    .maybeSingle();
+  if (!target) return;
+  const kind = ownListed ? "replace" : "new";
+  if (target.kind === kind) return;
+  await sb
+    .from("outreach_targets")
+    .update({ kind, updated_at: new Date().toISOString() })
+    .eq("id", target.id);
+}
+
+type ReusableEntry = {
+  id: string;
+  is_ranking_article: boolean;
+  own_listed: boolean;
+  own_rank_in_article: number | null;
+};
+
+/**
+ * 同じ案件の中で、同じ記事URLを直近に読み終えたエントリを探す。
+ * own_listed は案件の商材名で決まるので、案件をまたいだ使い回しはしない。
+ */
+async function findReusableExtraction(
+  sb: SB,
+  campaignId: string,
+  articleUrl: string,
+  excludeEntryId: string
+): Promise<ReusableEntry | null> {
+  if (!campaignId || !articleUrl) return null;
+
+  const { data: kws } = await sb.from("keywords").select("id").eq("campaign_id", campaignId);
+  const kwIds = (kws ?? []).map((k) => k.id);
+  if (!kwIds.length) return null;
+
+  const since = new Date(Date.now() - ENRICH_REUSE_WINDOW_MS).toISOString();
+  const { data: snaps } = await sb
+    .from("serp_snapshots")
+    .select("id")
+    .in("keyword_id", kwIds)
+    .gte("collected_at", since);
+  const snapIds = (snaps ?? []).map((x) => x.id);
+  if (!snapIds.length) return null;
+
+  const { data: rows } = await sb
+    .from("serp_entries")
+    .select("id, is_ranking_article, own_listed, own_rank_in_article")
+    .in("snapshot_id", snapIds)
+    .eq("article_url", articleUrl)
+    .neq("id", excludeEntryId)
+    .not("enriched_at", "is", null)
+    .order("enriched_at", { ascending: false })
+    .limit(1);
+  return (rows?.[0] as ReusableEntry | undefined) ?? null;
+}
+
 export async function runEnrichEntry(
   sb: SB,
   profile: Actor,
-  serpEntryId: string
+  serpEntryId: string,
+  opts?: { force?: boolean }
 ): Promise<EnrichResult> {
 
   if (!hasAnthropic()) {
@@ -546,6 +628,56 @@ export async function runEnrichEntry(
   const camp = snapObj?.keyword?.campaign;
   const campaignId = snapObj?.keyword?.campaign_id ?? "";
   const productName = camp?.product_name || camp?.name || "";
+
+  // --- 直近に同じ記事を読んでいれば、その結果を引き写して本文取得とAI解析を丸ごと省く ---
+  // 「記事本文から読み直す」で明示的に呼ばれた時（force）は必ず読み直す
+  if (!opts?.force) {
+    const reusable = await findReusableExtraction(sb, campaignId, entry.article_url, entry.id);
+    if (reusable) {
+      const { data: srcListings } = await sb
+        .from("article_listings")
+        .select("position, service_name, is_own")
+        .eq("serp_entry_id", reusable.id)
+        .order("position", { ascending: true, nullsFirst: false });
+
+      await sb.from("article_listings").delete().eq("serp_entry_id", entry.id);
+      if (srcListings?.length) {
+        await sb.from("article_listings").insert(
+          srcListings.map((l) => ({
+            tenant_id: profile.tenant_id,
+            serp_entry_id: entry.id,
+            position: l.position,
+            service_name: l.service_name,
+            is_own: l.is_own,
+          }))
+        );
+      }
+
+      const today = new Date().toISOString().slice(0, 10);
+      const base = stripEnrichMarker(entry.judge_reason);
+      await sb
+        .from("serp_entries")
+        .update({
+          is_ranking_article: reusable.is_ranking_article,
+          own_listed: reusable.own_listed,
+          own_rank_in_article: reusable.own_rank_in_article,
+          judge_reason: `${base ? `${base}／` : ""}本文読取済(${today}・再利用)`.slice(0, 500),
+          enriched_at: new Date().toISOString(),
+        })
+        .eq("id", entry.id);
+
+      await syncOutreachKind(sb, campaignId, entry.media_id, reusable.own_listed);
+      revalidatePath("/board");
+      if (campaignId) revalidatePath(`/campaigns/${campaignId}`);
+
+      return {
+        ok: true,
+        found: srcListings?.length ?? 0,
+        own_listed: reusable.own_listed,
+        reused: true,
+      };
+    }
+  }
 
   // --- 記事本文の取得（比較表は中盤以降にあることが多いので 30,000 文字まで読む） ---
   let bodyText = "";
@@ -621,9 +753,7 @@ ${bodyText}
 
   const ownListed = !!out.own_listed;
   const today = new Date().toISOString().slice(0, 10);
-  const baseReason = String(entry.judge_reason || "")
-    .replace(/／?本文読取済\(\d{4}-\d{2}-\d{2}\)/g, "")
-    .trim();
+  const baseReason = stripEnrichMarker(entry.judge_reason);
   const judgeReason = `${baseReason ? `${baseReason}／` : ""}本文読取済(${today})`.slice(0, 500);
 
   await sb
@@ -633,27 +763,12 @@ ${bodyText}
       own_listed: ownListed,
       own_rank_in_article: out.own_position ?? null,
       judge_reason: judgeReason,
+      enriched_at: new Date().toISOString(),
     })
     .eq("id", entry.id);
 
   // --- 打診対象（campaign×media）の kind を同期（new/replace の判定は収集時と同じ） ---
-  if (campaignId && entry.media_id) {
-    const { data: target } = await sb
-      .from("outreach_targets")
-      .select("id, kind")
-      .eq("campaign_id", campaignId)
-      .eq("media_id", entry.media_id)
-      .maybeSingle();
-    if (target) {
-      const kind = ownListed ? "replace" : "new";
-      if (target.kind !== kind) {
-        await sb
-          .from("outreach_targets")
-          .update({ kind, updated_at: new Date().toISOString() })
-          .eq("id", target.id);
-      }
-    }
-  }
+  await syncOutreachKind(sb, campaignId, entry.media_id, ownListed);
 
   await audit(
     sb,

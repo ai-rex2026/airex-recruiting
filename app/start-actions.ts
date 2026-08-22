@@ -501,9 +501,13 @@ export async function startCollectionForCampaign(
 
 /* ============ 第2段階：記事本文の読取（掲載枠の抽出） ============ */
 
-export async function enrichArticleListings(serpEntryId: string): Promise<EnrichResult> {
+/** force=true は「記事本文から読み直す」用。直近の読取結果を使い回さず必ず取得し直す */
+export async function enrichArticleListings(
+  serpEntryId: string,
+  force = false
+): Promise<EnrichResult> {
   const { sb, profile } = await ctx();
-  return runEnrichEntry(sb, profile, serpEntryId);
+  return runEnrichEntry(sb, profile, serpEntryId, { force });
 }
 
 export async function listEnrichableEntries(

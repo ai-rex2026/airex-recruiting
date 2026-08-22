@@ -31,7 +31,7 @@ export default function EnrichButton({ snapshotId }: { snapshotId: string }) {
       for (let i = 0; i < le.entries.length; i++) {
         setLabel(`読取中 ${i + 1}/${le.entries.length}`);
         try {
-          const r = await enrichArticleListings(le.entries[i].entry_id);
+          const r = await enrichArticleListings(le.entries[i].entry_id, true);
           if (r.ok) ok++;
         } catch {
           // 個別記事の失敗はスキップして続行
