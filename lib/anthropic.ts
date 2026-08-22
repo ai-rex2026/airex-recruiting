@@ -1,6 +1,13 @@
 import Anthropic from "@anthropic-ai/sdk";
 
+/**
+ * モデルは2階層にする。判断・生成が要る処理は品質側、機械的な抽出・分類は低コスト側。
+ * 記事本文の読取はこのアプリで最も量が多く、実記事21件で突き合わせたところ
+ * 掲載順位97.6%・記事種別100%・自社掲載100%が一致し、残差も表記の粒度差だった。
+ * 単価は 1/3（$3/$15 → $1/$5）になる。
+ */
 const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5";
+export const MODEL_FAST = process.env.ANTHROPIC_MODEL_FAST || "claude-haiku-4-5";
 
 export function hasAnthropic() {
   return !!process.env.ANTHROPIC_API_KEY;
@@ -10,9 +17,9 @@ function client() {
   return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 }
 
-export async function askText(system: string, user: string, maxTokens = 2000) {
+export async function askText(system: string, user: string, maxTokens = 2000, model = MODEL) {
   const res = await client().messages.create({
-    model: MODEL,
+    model,
     max_tokens: maxTokens,
     system,
     messages: [{ role: "user", content: user }],
@@ -47,9 +54,10 @@ function parseJson<T>(raw: string): T | null {
 export async function askJson<T>(
   system: string,
   user: string,
-  maxTokens = 4000
+  maxTokens = 4000,
+  model = MODEL
 ): Promise<T | null> {
-  return parseJson<T>(await askText(system + JSON_ONLY, user, maxTokens));
+  return parseJson<T>(await askText(system + JSON_ONLY, user, maxTokens, model));
 }
 
 /**

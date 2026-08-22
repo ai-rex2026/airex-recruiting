@@ -52,6 +52,20 @@
   `keyword_suggestions` に候補として積みます。**候補は自動では収集対象になりません**。人がチェックして「追加」した分だけ
   `keywords` に入ります（マスタの書き換えは承認制、という原則に合わせています）
 
+## AIモデルの使い分け
+
+APIコストの大半は**記事本文の読取**が占めるため、処理の性質でモデルを分けています。
+
+| 使うモデル | 処理 |
+|---|---|
+| `ANTHROPIC_MODEL_FAST`（既定 Haiku 4.5） | 記事本文からの掲載枠抽出／SERPのランキング記事判定／貼り付け収集の行判定／返信分類 |
+| `ANTHROPIC_MODEL`（既定 Sonnet 4.5） | LP・資料からの案件ドラフトとKW提案／KW候補の発想／打診文面の生成／資料（PDF）の読み取り |
+
+低コスト側に回した処理は、本番の実記事21件で両モデルを突き合わせて決めています
+（掲載順位の一致97.6%・記事種別100%・自社掲載100%、残差は「ながら洗車 スノーシャンプー」と
+「ながら洗車 スノーシャンプー『…』」のような表記の粒度差）。単価は $3/$15 → $1/$5 で、
+本文読取は実測 10.0円/件 → 3.4円/件 になりました。
+
 ## 収集センター（/start）
 
 商品のURL、または商品情報・キーワードのテキストを入れるだけで、
@@ -90,6 +104,8 @@ NEXT_PUBLIC_APP_URL
 NEXT_PUBLIC_SUPABASE_URL
 NEXT_PUBLIC_SUPABASE_ANON_KEY
 ANTHROPIC_API_KEY
+ANTHROPIC_MODEL        # 任意。判断・生成に使うモデル（既定 claude-sonnet-4-5）
+ANTHROPIC_MODEL_FAST   # 任意。抽出・分類に使うモデル（既定 claude-haiku-4-5）
 DATAFORSEO_LOGIN     # SERP（スポンサー広告＋オーガニック）・検索ボリューム・関連KW
 DATAFORSEO_PASSWORD
 WORKER_TOKEN      # 送信ワーカー連携（任意）

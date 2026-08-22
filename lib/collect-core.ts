@@ -1,7 +1,7 @@
 import { revalidatePath } from "next/cache";
 import Anthropic from "@anthropic-ai/sdk";
 import type { createClient } from "@/lib/supabase/server";
-import { askJson, hasAnthropic } from "@/lib/anthropic";
+import { askJson, hasAnthropic, MODEL_FAST } from "@/lib/anthropic";
 import { normalizeDomain, safeUrl } from "@/lib/domain";
 import { hasDataForSeo, fetchSerp, type SerpItem } from "@/lib/dataforseo";
 
@@ -152,7 +152,8 @@ ${table}
 各行について、通し番号 index を必ず添えて出力してください。
 出力形式（STRICT JSON のみ）:
 {"results":[{"index":0,"is_ranking_article":true,"site_name":"サイト名","reason":"判定理由を20字程度で","own_listed":false}]}`,
-    8000
+    8000,
+    MODEL_FAST
   );
 
   if (!out?.results?.length) return [];
@@ -720,7 +721,8 @@ ${bodyText}
 
 出力形式（STRICT JSON のみ）:
 {"is_ranking_article":true,"listed_services":[{"position":1,"name":"..."}],"own_listed":false,"own_position":null}`,
-    4000
+    4000,
+    MODEL_FAST
   );
   if (!out || !Array.isArray(out.listed_services)) {
     return { ok: false, error: "本文の解析に失敗しました。" };

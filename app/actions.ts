@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient, getSessionProfile } from "@/lib/supabase/server";
-import { askJson, askText, hasAnthropic } from "@/lib/anthropic";
+import { askJson, askText, hasAnthropic, MODEL_FAST } from "@/lib/anthropic";
 import { normalizeDomain, safeUrl, BLOCKING_RESULTS } from "@/lib/domain";
 import { hasDataForSeo, fetchSearchVolume, fetchKeywordIdeas } from "@/lib/dataforseo";
 
@@ -423,7 +423,8 @@ ${lines.join("\n")}
 
 出力形式:
 {"results":[{"url":"https://...","title":"...","rank":1,"result_type":"organic","is_ranking_article":true,"reason":"判定理由を20字程度で","media_name":"サイト名","own_listed":false,"own_position":null,"competitors":[{"position":1,"service_name":"..."}]}]}`,
-      8000
+      8000,
+      MODEL_FAST
     );
     rows = out?.results ?? [];
   }
@@ -891,7 +892,9 @@ export async function addReply(formData: FormData) {
 ---
 ${body.slice(0, 4000)}
 ---
-{"class":"...","summary":"1文の要約","terms":"単価・掲載位置・期間など読み取れた条件。無ければ空文字"} を出力。`
+{"class":"...","summary":"1文の要約","terms":"単価・掲載位置・期間など読み取れた条件。無ければ空文字"} を出力。`,
+      4000,
+      MODEL_FAST
     );
     if (out)
       ai = {
