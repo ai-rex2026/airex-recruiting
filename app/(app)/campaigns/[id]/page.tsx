@@ -15,6 +15,8 @@ import CampaignJobs, { type CampaignGroup, type JobInfo } from "@/app/(app)/star
 import { Card, Empty, Badge, btnSmall, inputCls, labelCls } from "@/components/ui";
 import SubmitButton from "@/components/SubmitButton";
 import CampaignDocsCard from "@/components/CampaignDocsCard";
+import { loadCampaignCost } from "@/lib/cost-data";
+import { fmtYen } from "@/lib/ai-cost";
 
 export const dynamic = "force-dynamic";
 // 収集状況タブの自動収集アクションはこのセグメントで実行される（Web検索が長いため180秒）
@@ -24,6 +26,7 @@ const TABS = [
   { id: "collect", label: "収集状況" },
   { id: "board", label: "陣取りボード" },
   { id: "info", label: "案件情報・KW" },
+  { id: "cost", label: "AIコスト" },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
@@ -75,7 +78,7 @@ export default async function CampaignDetail({
     .maybeSingle();
   if (!c) notFound();
 
-  const [{ data: kws }, { data: jobs }, { data: suggestions }] = await Promise.all([
+  const [{ data: kws }, { data: jobs }, { data: suggestions }, cost] = await Promise.all([
     sb
       .from("keywords")
       .select("*, snapshots:serp_snapshots(id, collected_at)")
@@ -93,6 +96,7 @@ export default async function CampaignDetail({
       .eq("status", "suggested")
       .order("search_volume", { ascending: false, nullsFirst: false })
       .limit(120),
+    loadCampaignCost(sb, id),
   ]);
 
   const clientName = (c.client as unknown as { name: string } | null)?.name ?? "";
@@ -148,6 +152,9 @@ export default async function CampaignDetail({
           <span className="rounded-lg bg-slate-100 px-2 py-1">
             最終収集 {group.last_collected ? new Date(group.last_collected).toLocaleString("ja-JP") : "—"}
           </span>
+          <Link href={`/campaigns/${id}?tab=cost`} className="rounded-lg bg-amber-50 px-2 py-1 text-amber-900 hover:bg-amber-100">
+            AIコスト {cost.calls ? fmtYen(cost.totalUsd) : "—"}
+          </Link>
         </div>
       </header>
 
@@ -182,6 +189,120 @@ export default async function CampaignDetail({
       )}
 
       {tab === "board" && <BoardView campaignId={id} />}
+
+      {tab === "cost" && (
+        <div className="space-y-6">
+          <Card
+            title="この案件にかかったAI利用料"
+            desc="実際に使ったトークン数から、実行時点の単価で計算した実績です（USD建ての請求を円換算した目安）"
+          >
+            {cost.calls === 0 ? (
+              <Empty>
+                まだ記録がありません。計測はこの機能を入れた時点以降の実行分から積み上がります。
+                収集を1回動かすと数字が入ります。
+              </Empty>
+            ) : (
+              <>
+                <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2">
+                  <div>
+                    <div className="text-3xl font-bold text-[#1B2A4A]">{fmtYen(cost.totalUsd)}</div>
+                    <div className="text-[11px] text-slate-500">${cost.totalUsd.toFixed(2)}</div>
+                  </div>
+                  <dl className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-600">
+                    <div>
+                      <dt className="inline text-slate-400">AI呼び出し </dt>
+                      <dd className="inline font-semibold tabular-nums">{cost.calls.toLocaleString("ja-JP")}回</dd>
+                    </div>
+                    <div>
+                      <dt className="inline text-slate-400">入力 </dt>
+                      <dd className="inline font-semibold tabular-nums">
+                        {(cost.inputTokens / 1000).toLocaleString("ja-JP", { maximumFractionDigits: 0 })}Kトークン
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="inline text-slate-400">出力 </dt>
+                      <dd className="inline font-semibold tabular-nums">
+                        {(cost.outputTokens / 1000).toLocaleString("ja-JP", { maximumFractionDigits: 0 })}Kトークン
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="inline text-slate-400">最終 </dt>
+                      <dd className="inline">{cost.lastAt ? new Date(cost.lastAt).toLocaleString("ja-JP") : "—"}</dd>
+                    </div>
+                  </dl>
+                </div>
+
+                <table className="tbl mt-5 w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-[11px] text-slate-500">
+                      <th className="pb-2">処理</th>
+                      <th className="pb-2 text-right">金額</th>
+                      <th className="pb-2 text-right">割合</th>
+                      <th className="pb-2 text-right">呼び出し</th>
+                      <th className="pb-2 text-right">入力トークン</th>
+                      <th className="pb-2 text-right">出力トークン</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cost.byKind.map((k) => {
+                      const share = cost.totalUsd ? k.costUsd / cost.totalUsd : 0;
+                      return (
+                        <tr key={k.kind}>
+                          <td className="py-2 font-medium">{k.label}</td>
+                          <td className="py-2 text-right tabular-nums">{fmtYen(k.costUsd)}</td>
+                          <td className="py-2 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              <div className="h-1.5 w-20 overflow-hidden rounded bg-slate-100">
+                                <div className="h-full bg-[#1B2A4A]" style={{ width: `${Math.round(share * 100)}%` }} />
+                              </div>
+                              <span className="tabular-nums text-[11px] text-slate-500">
+                                {Math.round(share * 100)}%
+                              </span>
+                            </div>
+                          </td>
+                          <td className="py-2 text-right tabular-nums">{k.calls.toLocaleString("ja-JP")}</td>
+                          <td className="py-2 text-right tabular-nums text-slate-500">
+                            {k.inputTokens.toLocaleString("ja-JP")}
+                          </td>
+                          <td className="py-2 text-right tabular-nums text-slate-500">
+                            {k.outputTokens.toLocaleString("ja-JP")}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </>
+            )}
+          </Card>
+
+          {cost.byKeyword.length > 0 && (
+            <Card title="キーワード別" desc="どのKWにコストがかかっているか（上位10件）">
+              <table className="tbl w-full text-sm">
+                <thead>
+                  <tr className="text-left text-[11px] text-slate-500">
+                    <th className="pb-2">キーワード</th>
+                    <th className="pb-2 text-right">金額</th>
+                    <th className="pb-2 text-right">呼び出し</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cost.byKeyword.map((k) => (
+                    <tr key={k.keyword}>
+                      <td className="py-2 font-medium">{k.keyword}</td>
+                      <td className="py-2 text-right tabular-nums">{fmtYen(k.costUsd)}</td>
+                      <td className="py-2 text-right tabular-nums">{k.calls.toLocaleString("ja-JP")}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p className="mt-3 text-[11px] text-slate-400">
+                案件作成前に動く「案件ドラフト作成」は、案件がまだ存在しないため案件別の集計には入りません。
+              </p>
+            </Card>
+          )}
+        </div>
+      )}
 
       {tab === "info" && (
         <div className="space-y-6">

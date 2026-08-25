@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getSessionProfile } from "@/lib/supabase/server";
 import { hasAnthropic, askJsonWithContent, fileContentBlock } from "@/lib/anthropic";
+import { meterTo } from "@/lib/usage";
 import { extractOoxmlText, ooxmlKindOf } from "@/lib/ooxml-read";
 
 async function ctx() {
@@ -48,6 +49,7 @@ export type MediaKitExtract = {
 
 export type DocumentRow = {
   id: string;
+  tenant_id: string;
   kind: DocKind;
   campaign_id: string | null;
   media_id: string | null;
@@ -165,7 +167,14 @@ export async function extractDocument(documentId: string): Promise<ExtractResult
     const out = await askJsonWithContent<BriefExtract | MediaKitExtract>(
       isBrief ? BRIEF_SYSTEM : MEDIA_KIT_SYSTEM,
       [block, { type: "text", text: `この資料から読み取ってください。\n\n出力形式（STRICT JSON のみ）:\n${shape}` }],
-      isBrief ? 8000 : 4000
+      {
+        maxTokens: isBrief ? 8000 : 4000,
+        meter: meterTo(sb, {
+          tenantId: row.tenant_id,
+          campaignId: row.campaign_id ?? null,
+          kind: "document",
+        }),
+      }
     );
     if (!out) throw new Error("AIの読み取り結果を解析できませんでした。もう一度お試しください。");
 

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient, getSessionProfile } from "@/lib/supabase/server";
 import { askJson, askText, hasAnthropic, MODEL_FAST } from "@/lib/anthropic";
+import { meterTo } from "@/lib/usage";
 import { normalizeDomain, safeUrl, BLOCKING_RESULTS } from "@/lib/domain";
 import { hasDataForSeo, fetchSearchVolume, fetchKeywordIdeas } from "@/lib/dataforseo";
 
@@ -241,7 +242,7 @@ LP: ${camp.lp_url}
 この商材の掲載を狙うべき検索キーワードを日本語で30個提案してください。
 「おすすめ」「比較」「ランキング」「口コミ」など比較記事が上位に来る語に加えて、地域名・悩み・価格帯などの掛け合わせも含めること。
 {"keywords":[{"keyword":"...","reason":"狙う理由を15字程度で"}]} の形式で出力してください。`,
-      4000
+      { meter: meterTo(sb, { tenantId: profile.tenant_id, campaignId, kind: "kw_suggest" }) }
     );
     for (const k of out?.keywords ?? []) {
       const kw = String(k?.keyword || "").trim();
@@ -423,8 +424,11 @@ ${lines.join("\n")}
 
 出力形式:
 {"results":[{"url":"https://...","title":"...","rank":1,"result_type":"organic","is_ranking_article":true,"reason":"判定理由を20字程度で","media_name":"サイト名","own_listed":false,"own_position":null,"competitors":[{"position":1,"service_name":"..."}]}]}`,
-      8000,
-      MODEL_FAST
+      {
+        maxTokens: 8000,
+        model: MODEL_FAST,
+        meter: meterTo(sb, { tenantId: profile.tenant_id, campaignId, keywordId, kind: "ingest" }),
+      }
     );
     rows = out?.results ?? [];
   }
@@ -651,7 +655,14 @@ export async function generateDrafts(formData: FormData) {
 【署名】${vars["{{署名}}"]}
 
 ${body ? `既存テンプレートを土台にしてください:\n---\n${body}\n---` : ""}`,
-        1500
+        {
+          maxTokens: 1500,
+          meter: meterTo(sb, {
+            tenantId: profile.tenant_id,
+            campaignId: (t as { campaign_id?: string }).campaign_id ?? null,
+            kind: "message",
+          }),
+        }
       );
       if (generated) body = generated;
     }
@@ -853,13 +864,15 @@ export async function suggestContactFix(formData: FormData) {
   if (!hasAnthropic()) return;
   const { data: m } = await sb.from("media").select("*").eq("id", mediaId).single();
   if (!m) return;
+  const contactMeter = meterTo(sb, { tenantId: profile.tenant_id, kind: "contact_fix" });
   const out = await askJson<{ candidates: string[]; note: string }>(
     "あなたは日本のWebサイトの問い合わせ導線に詳しいリサーチャーです。到達できないURLについて、一般的な命名規則から問い合わせフォームURLの候補を挙げます。Web検索はできないため、あくまで候補であることを前提に答えます。",
     `メディア名: ${m.name}
 ドメイン: ${m.domain}
 既知の情報: ${m.note}
 
-このサイトの問い合わせフォームURLとして考えられる候補を最大5件、{"candidates":["https://..."],"note":"確認時の注意"} で出力してください。実在の確証はない前提で、確認が必要である旨を note に書くこと。`
+このサイトの問い合わせフォームURLとして考えられる候補を最大5件、{"candidates":["https://..."],"note":"確認時の注意"} で出力してください。実在の確証はない前提で、確認が必要である旨を note に書くこと。`,
+    { meter: contactMeter }
   );
   if (out) {
     await sb
@@ -884,6 +897,13 @@ export async function addReply(formData: FormData) {
   const body = String(formData.get("body") || "");
   if (!body.trim()) return;
 
+  // コストを案件に紐づけるため、打診対象から案件を引いておく
+  const { data: tgt } = await sb
+    .from("outreach_targets")
+    .select("campaign_id")
+    .eq("id", targetId)
+    .maybeSingle();
+
   let ai = { ai_class: "", ai_summary: "", extracted_terms: "" };
   if (hasAnthropic()) {
     const out = await askJson<{ class: string; summary: string; terms: string }>(
@@ -893,8 +913,14 @@ export async function addReply(formData: FormData) {
 ${body.slice(0, 4000)}
 ---
 {"class":"...","summary":"1文の要約","terms":"単価・掲載位置・期間など読み取れた条件。無ければ空文字"} を出力。`,
-      4000,
-      MODEL_FAST
+      {
+        model: MODEL_FAST,
+        meter: meterTo(sb, {
+          tenantId: profile.tenant_id,
+          campaignId: tgt?.campaign_id ?? null,
+          kind: "reply",
+        }),
+      }
     );
     if (out)
       ai = {

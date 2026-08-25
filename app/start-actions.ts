@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getSessionProfile } from "@/lib/supabase/server";
 import { askJson, hasAnthropic } from "@/lib/anthropic";
+import { meterTo } from "@/lib/usage";
 import {
   runCollectJob,
   runEnrichEntry,
@@ -158,7 +159,7 @@ function htmlToText(html: string, limit = 15000): string {
 }
 
 export async function proposeCampaignFromInput(formData: FormData): Promise<ProposeResult> {
-  await ctx();
+  const { sb, profile } = await ctx();
 
   const inputUrl = safeUrl(String(formData.get("input_url") || "").trim());
   const inputText = String(formData.get("input_text") || "").trim();
@@ -212,7 +213,8 @@ ${material}
 
 出力形式（STRICT JSON のみ）:
 {"client_name":"...","campaign_name":"...","product_name":"...","selling_points":"...","conversion_point":"...","keywords":[{"keyword":"...","priority":1}]}`,
-    4000
+    // この時点では案件がまだ無いので案件には紐づかない（テナント合計には入る）
+    { meter: meterTo(sb, { tenantId: profile.tenant_id, kind: "campaign_draft" }) }
   );
 
   if (!out || !out.product_name || !Array.isArray(out.keywords)) {

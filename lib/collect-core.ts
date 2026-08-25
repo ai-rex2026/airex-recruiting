@@ -1,7 +1,8 @@
 import { revalidatePath } from "next/cache";
 import Anthropic from "@anthropic-ai/sdk";
 import type { createClient } from "@/lib/supabase/server";
-import { askJson, hasAnthropic, MODEL_FAST } from "@/lib/anthropic";
+import { askJson, hasAnthropic, MODEL_FAST, type AiUsage } from "@/lib/anthropic";
+import { meterTo } from "@/lib/usage";
 import { normalizeDomain, safeUrl } from "@/lib/domain";
 import { hasDataForSeo, fetchSerp, type SerpItem } from "@/lib/dataforseo";
 
@@ -121,7 +122,8 @@ function extractLastJsonBlock<T>(text: string, anchor: string): T | null {
 async function judgeSerpItems(
   camp: { product_name?: string; name?: string; selling_points?: string },
   keyword: string,
-  items: SerpItem[]
+  items: SerpItem[],
+  meter?: (u: AiUsage) => Promise<void> | void
 ): Promise<FoundSite[]> {
   const productName = camp.product_name || camp.name || "";
   const list = items.slice(0, 30);
@@ -152,8 +154,7 @@ ${table}
 各行について、通し番号 index を必ず添えて出力してください。
 出力形式（STRICT JSON のみ）:
 {"results":[{"index":0,"is_ranking_article":true,"site_name":"サイト名","reason":"判定理由を20字程度で","own_listed":false}]}`,
-    8000,
-    MODEL_FAST
+    { maxTokens: 8000, model: MODEL_FAST, meter }
   );
 
   if (!out?.results?.length) return [];
@@ -183,7 +184,8 @@ ${table}
 async function searchViaWebSearchTool(
   camp: { selling_points?: string },
   keyword: string,
-  productName: string
+  productName: string,
+  meter?: (u: AiUsage) => Promise<void> | void
 ): Promise<{ ok: true; sites: FoundSite[] } | { ok: false; error: string }> {
   const prompt = `日本語のWebを検索して、検索キーワード「${keyword}」の検索上位に出てくる「ランキング／比較／おすすめ」形式の記事・サイトを特定してください。
 - 対象: 複数のサービス・商品を順位付け・比較して紹介している第三者メディアの記事
@@ -230,6 +232,13 @@ async function searchViaWebSearchTool(
     } finally {
       clearTimeout(watchdogTimer);
     }
+    // Web検索はトークンとは別に1検索ごとの従量課金があるので、実行回数も数えて記録する
+    await meter?.({
+      model: MODEL,
+      input_tokens: res.usage.input_tokens,
+      output_tokens: res.usage.output_tokens,
+      web_searches: res.content.filter((b) => (b as { type: string }).type === "server_tool_use").length,
+    });
     const text = res.content.map((b) => (b.type === "text" ? b.text : "")).join("\n");
     const parsed = extractLastJsonBlock<{ sites: Omit<FoundSite, "result_type">[] }>(text, '"sites"');
     const sites = (parsed?.sites ?? [])
@@ -312,6 +321,9 @@ export async function runCollectJob(
   if (!camp || !kw) return fail("案件またはキーワードが見つかりません。");
 
   const productName = camp.product_name || camp.name || "";
+  const scope = { tenantId: profile.tenant_id, campaignId, keywordId } as const;
+  const judgeMeter = meterTo(sb, { ...scope, kind: "collect_judge" });
+  const searchMeter = meterTo(sb, { ...scope, kind: "collect_search" });
 
   let sites: FoundSite[] = [];
   // 収集元。DataForSEO が使えるときは Google の実SERP（スポンサー広告つき）、無ければ Claude の Web検索
@@ -324,7 +336,7 @@ export async function runCollectJob(
     if (!serp.ok) {
       serpNote = serp.error;
     } else if (serp.items.length) {
-      sites = await judgeSerpItems(camp, kw.keyword, serp.items);
+      sites = await judgeSerpItems(camp, kw.keyword, serp.items, judgeMeter);
       if (sites.length) source = "dataforseo";
     }
     // 取得できなければ②へフォールバックする（その回だけ広告枠が拾えない）
@@ -332,7 +344,7 @@ export async function runCollectJob(
 
   // ② フォールバック：Claude の Web検索ツール。広告枠は返らないので全件オーガニック扱い
   if (!sites.length) {
-    const ws = await searchViaWebSearchTool(camp, kw.keyword, productName);
+    const ws = await searchViaWebSearchTool(camp, kw.keyword, productName, searchMeter);
     if (!ws.ok) return fail(serpNote ? `${ws.error}（DataForSEO: ${serpNote}）` : ws.error);
     sites = ws.sites;
   }
@@ -621,6 +633,7 @@ export async function runEnrichEntry(
 
   const snapObj = entry.snapshot as unknown as {
     keyword?: {
+      id: string;
       keyword: string;
       campaign_id: string;
       campaign?: { id: string; name: string; product_name: string; selling_points: string } | null;
@@ -721,8 +734,16 @@ ${bodyText}
 
 出力形式（STRICT JSON のみ）:
 {"is_ranking_article":true,"listed_services":[{"position":1,"name":"..."}],"own_listed":false,"own_position":null}`,
-    4000,
-    MODEL_FAST
+    {
+      maxTokens: 4000,
+      model: MODEL_FAST,
+      meter: meterTo(sb, {
+        tenantId: profile.tenant_id,
+        campaignId,
+        keywordId: snapObj?.keyword?.id ?? null,
+        kind: "enrich",
+      }),
+    }
   );
   if (!out || !Array.isArray(out.listed_services)) {
     return { ok: false, error: "本文の解析に失敗しました。" };

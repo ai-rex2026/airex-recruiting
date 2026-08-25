@@ -432,3 +432,50 @@ create policy keyword_suggestions_rw on keyword_suggestions for all to authentic
 alter table serp_entries add column if not exists enriched_at timestamptz;
 -- 再利用の検索条件（記事URL × 読取済み）に効かせる
 create index if not exists idx_entries_reuse on serp_entries(article_url, enriched_at desc nulls last);
+
+-- ============ AI利用料の計測 ============
+-- 「1レポート（＝1案件）を作るのにいくらかかったか」を画面に出すための実績。
+-- 単価は変わるので、記録時点の単価で金額に変換して凍結する（cost_usd）。
+create table if not exists ai_usage (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete cascade,
+  campaign_id uuid references campaigns(id) on delete cascade,
+  keyword_id uuid references keywords(id) on delete set null,
+  kind text not null,                      -- enrich | collect_search | collect_judge | ...
+  model text not null,
+  input_tokens int not null default 0,
+  output_tokens int not null default 0,
+  web_searches int not null default 0,     -- Web検索ツールはトークンと別建ての従量
+  cost_usd numeric(12,6) not null default 0,
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_ai_usage_campaign on ai_usage(campaign_id, created_at desc);
+create index if not exists idx_ai_usage_tenant on ai_usage(tenant_id, created_at desc);
+
+alter table ai_usage enable row level security;
+drop policy if exists ai_usage_rw on ai_usage;
+create policy ai_usage_rw on ai_usage for all to authenticated
+  using (tenant_id = current_tenant_id()) with check (tenant_id = current_tenant_id());
+
+-- 集計をDB側で済ませる。1案件で数千行になるので、明細を全部引かずに済ませたい。
+-- security_invoker = on で ai_usage の RLS がそのまま効く。
+create or replace view ai_usage_by_kind
+with (security_invoker = on) as
+  select tenant_id, campaign_id, kind,
+         count(*)::bigint            as calls,
+         sum(input_tokens)::bigint   as input_tokens,
+         sum(output_tokens)::bigint  as output_tokens,
+         sum(web_searches)::bigint   as web_searches,
+         sum(cost_usd)::numeric      as cost_usd,
+         max(created_at)             as last_at
+  from ai_usage
+  group by tenant_id, campaign_id, kind;
+
+create or replace view ai_usage_by_keyword
+with (security_invoker = on) as
+  select u.tenant_id, u.campaign_id, u.keyword_id, k.keyword,
+         count(*)::bigint       as calls,
+         sum(u.cost_usd)::numeric as cost_usd
+  from ai_usage u
+  join keywords k on k.id = u.keyword_id
+  group by u.tenant_id, u.campaign_id, u.keyword_id, k.keyword;

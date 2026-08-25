@@ -17,12 +17,34 @@ function client() {
   return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 }
 
-export async function askText(system: string, user: string, maxTokens = 2000, model = MODEL) {
+/** 1回の呼び出しで実際に使ったトークン。コスト可視化のために必ず呼び出し元へ返す */
+export type AiUsage = {
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  /** Web検索ツールの実行回数（トークンとは別に従量課金される） */
+  web_searches?: number;
+};
+
+export type AskOpts = {
+  maxTokens?: number;
+  model?: string;
+  /** 使用量の記録先。lib/usage.ts の meterTo() を渡す */
+  meter?: (u: AiUsage) => Promise<void> | void;
+};
+
+export async function askText(system: string, user: string, opts: AskOpts = {}) {
+  const model = opts.model ?? MODEL;
   const res = await client().messages.create({
     model,
-    max_tokens: maxTokens,
+    max_tokens: opts.maxTokens ?? 2000,
     system,
     messages: [{ role: "user", content: user }],
+  });
+  await opts.meter?.({
+    model,
+    input_tokens: res.usage.input_tokens,
+    output_tokens: res.usage.output_tokens,
   });
   return res.content
     .map((b) => (b.type === "text" ? b.text : ""))
@@ -54,10 +76,11 @@ function parseJson<T>(raw: string): T | null {
 export async function askJson<T>(
   system: string,
   user: string,
-  maxTokens = 4000,
-  model = MODEL
+  opts: AskOpts = {}
 ): Promise<T | null> {
-  return parseJson<T>(await askText(system + JSON_ONLY, user, maxTokens, model));
+  return parseJson<T>(
+    await askText(system + JSON_ONLY, user, { maxTokens: 4000, ...opts })
+  );
 }
 
 /**
@@ -67,13 +90,19 @@ export async function askJson<T>(
 export async function askJsonWithContent<T>(
   system: string,
   content: Anthropic.Messages.ContentBlockParam[],
-  maxTokens = 4000
+  opts: AskOpts = {}
 ): Promise<T | null> {
+  const model = opts.model ?? MODEL;
   const res = await client().messages.create({
-    model: MODEL,
-    max_tokens: maxTokens,
+    model,
+    max_tokens: opts.maxTokens ?? 4000,
     system: system + JSON_ONLY,
     messages: [{ role: "user", content }],
+  });
+  await opts.meter?.({
+    model,
+    input_tokens: res.usage.input_tokens,
+    output_tokens: res.usage.output_tokens,
   });
   const raw = res.content
     .map((b) => (b.type === "text" ? b.text : ""))
