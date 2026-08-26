@@ -64,7 +64,19 @@ export type BoardKeyword = {
   snapshotId: string | null;
   collectedAt: string | null;
   count: number;
+  /** 取得元。dataforseo=実際のGoogle / ai_web_search=Claude検索 / manual=貼り付け */
+  source: string;
 };
+
+/** 取得元の表示。Google の順位かどうかを取り違えないよう画面に必ず出す */
+export const SOURCE_LABEL: Record<string, string> = {
+  dataforseo: "Google",
+  ai_web_search: "Claude検索",
+  manual: "貼り付け",
+};
+
+/** Google の実際の検索結果から取れているか（順位として信頼してよいか） */
+export const isGoogleSource = (source: string) => source === "dataforseo";
 
 /** ダウンロード（xlsx/CSV）の列定義。画面のヘッダーもこれを使う */
 export const EXCEL_COLUMNS: { key: string; label: string; width: number }[] = [
@@ -330,12 +342,12 @@ export async function buildBoardData(sb: Sb, campaignId: string) {
   const { data: snaps } = kwIds.length
     ? await sb
         .from("serp_snapshots")
-        .select("id, keyword_id, collected_at")
+        .select("id, keyword_id, collected_at, source")
         .in("keyword_id", kwIds)
         .order("collected_at", { ascending: false })
-    : { data: [] as { id: string; keyword_id: string; collected_at: string }[] };
+    : { data: [] as { id: string; keyword_id: string; collected_at: string; source: string }[] };
 
-  const latestSnap = new Map<string, { id: string; collected_at: string }>();
+  const latestSnap = new Map<string, { id: string; collected_at: string; source: string }>();
   for (const s of snaps ?? []) if (!latestSnap.has(s.keyword_id)) latestSnap.set(s.keyword_id, s);
   const snapIds = [...latestSnap.values()].map((s) => s.id);
 
@@ -386,6 +398,7 @@ export async function buildBoardData(sb: Sb, campaignId: string) {
       id: k.id,
       keyword: k.keyword,
       snapshotId: snap?.id ?? null,
+      source: snap?.source ?? "",
       collectedAt: snap?.collected_at ?? null,
       count: mine.length,
     });

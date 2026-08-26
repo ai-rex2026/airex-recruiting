@@ -9,6 +9,8 @@ import {
   EXCEL_COLUMNS,
   type BoardRow,
   type CampaignBrief,
+  SOURCE_LABEL,
+  isGoogleSource,
 } from "@/lib/board-data";
 
 function fmt(dt: string | null | undefined): string {
@@ -79,10 +81,35 @@ export default async function BoardView({ campaignId }: { campaignId: string }) 
             <span className="text-slate-400">
               {k.collectedAt ? `${fmt(k.collectedAt)}／${k.count}件` : "未収集"}
             </span>
+            {k.source && (
+              <span
+                className={`rounded px-1 py-0.5 text-[10px] font-semibold ${
+                  isGoogleSource(k.source)
+                    ? "bg-emerald-100 text-emerald-800"
+                    : "bg-amber-100 text-amber-900"
+                }`}
+                title={
+                  isGoogleSource(k.source)
+                    ? "Googleの検索結果から取得しています"
+                    : "Googleではない経路で取得しています。順位はGoogleの検索順位ではありません"
+                }
+              >
+                {SOURCE_LABEL[k.source] ?? k.source}
+              </span>
+            )}
             {k.snapshotId && <EnrichButton snapshotId={k.snapshotId} />}
           </span>
         ))}
       </div>
+
+      {keywords.some((k) => k.source && !isGoogleSource(k.source)) && (
+        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-900">
+          <span className="font-semibold">この表の「順位」はGoogleの検索順位ではありません。</span>{" "}
+          Googleの資格情報（DATAFORSEO_LOGIN / DATAFORSEO_PASSWORD）が未設定のため、一部のKWはClaudeの
+          Web検索で収集しています。検索エンジンが違うため、実際のGoogleとは上位に出るサイト自体が変わります。
+          資格情報を設定して再収集すると、Googleの結果に置き換わります。
+        </div>
+      )}
 
       {total === 0 ? (
         <Empty>

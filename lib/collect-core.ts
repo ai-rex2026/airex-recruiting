@@ -79,6 +79,13 @@ export type CollectAutoResult =
   | { ok: true; job_id: string; snapshot_id: string; found: number; ranking_articles: number; paid: number; media_new: number }
   | { ok: false; error: string };
 
+/**
+ * SERP_REQUIRE_GOOGLE=1 のとき、Google以外の経路では収集しない。
+ * Claudeの検索とGoogleでは上位に出るサイト自体が変わるため、「順位」の意味が変わってしまう。
+ * 誤ったデータが積み上がるより、収集が失敗して気づけるほうがよい運用のための締め切り弁。
+ */
+const requireGoogle = () => process.env.SERP_REQUIRE_GOOGLE === "1";
+
 /** running のまま3分を超えたジョブは中断とみなして引き継ぐ */
 const STALE_RUNNING_MS = 3 * 60 * 1000;
 
@@ -340,6 +347,14 @@ export async function runCollectJob(
       if (sites.length) source = "dataforseo";
     }
     // 取得できなければ②へフォールバックする（その回だけ広告枠が拾えない）
+  }
+
+  if (!sites.length && requireGoogle()) {
+    return fail(
+      hasDataForSeo()
+        ? `Googleの検索結果を取得できませんでした${serpNote ? `（${serpNote}）` : ""}。SERP_REQUIRE_GOOGLE=1 のため、Google以外の経路では収集しません。`
+        : "Google検索の資格情報（DATAFORSEO_LOGIN / DATAFORSEO_PASSWORD）が未設定です。SERP_REQUIRE_GOOGLE=1 のため、Google以外の経路では収集しません。"
+    );
   }
 
   // ② フォールバック：Claude の Web検索ツール。広告枠は返らないので全件オーガニック扱い
