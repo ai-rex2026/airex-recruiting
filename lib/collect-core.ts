@@ -124,7 +124,7 @@ function extractLastJsonBlock<T>(text: string, anchor: string): T | null {
  * DataForSEO の SERP（スポンサー広告＋オーガニック）を、ランキング/比較記事かどうかで仕分ける。
  * 掲載枠（記事内の商品と順位）はタイトル・説明文からは正確に読めないので、ここでは判定だけ行い、
  * 中身は第2段階の本文読取（runEnrichEntry）に任せる。
- * AI の応答を解析できなければ空配列を返し、呼び出し側は Web検索へフォールバックする。
+ * AI の応答を解析できなければ空配列を返す。呼び出し側は Web検索へ切り替えず、再収集を促して失敗にする。
  */
 async function judgeSerpItems(
   camp: { product_name?: string; name?: string; selling_points?: string },
@@ -337,16 +337,23 @@ export async function runCollectJob(
   let source: "dataforseo" | "ai_web_search" = "ai_web_search";
   let serpNote = "";
 
-  // ① DataForSEO：スポンサー広告（赤枠）とオーガニック（青枠）を分けて取得できるのはこの経路だけ
+  // ① DataForSEO：Google の実SERPを取得する
   if (hasDataForSeo()) {
     const serp = await fetchSerp(kw.keyword, 20);
     if (!serp.ok) {
+      // DataForSEO への問い合わせ自体が失敗した（エラー・接続障害・残高切れ等）ときだけ、②へフォールバックする
       serpNote = serp.error;
-    } else if (serp.items.length) {
+    } else if (!serp.items.length) {
+      // DataForSEO は正常に応答したので、Claude の検索へは切り替えない（Claude 検索の結果は Google の順位とは別物になる）
+      return fail("Googleの検索結果が0件でした（DataForSEO は正常に応答）。時間をおいて再収集してください。");
+    } else {
       sites = await judgeSerpItems(camp, kw.keyword, serp.items, judgeMeter);
-      if (sites.length) source = "dataforseo";
+      if (!sites.length) {
+        // 判定AIの応答を解析できなかった場合。これも Claude 検索へは切り替えず、再収集を促す
+        return fail("Googleの検索結果は取得できましたが、ランキング/比較記事の判定に失敗しました。再収集してください。");
+      }
+      source = "dataforseo";
     }
-    // 取得できなければ②へフォールバックする（その回だけ広告枠が拾えない）
   }
 
   if (!sites.length && requireGoogle()) {
@@ -357,7 +364,8 @@ export async function runCollectJob(
     );
   }
 
-  // ② フォールバック：Claude の Web検索ツール。広告枠は返らないので全件オーガニック扱い
+  // ② フォールバック：Claude の Web検索ツール。DataForSEO が未設定、またはDataForSEO への問い合わせが失敗したときだけ通る。
+  // 広告枠は返らないので全件オーガニック扱い
   if (!sites.length) {
     const ws = await searchViaWebSearchTool(camp, kw.keyword, productName, searchMeter);
     if (!ws.ok) return fail(serpNote ? `${ws.error}（DataForSEO: ${serpNote}）` : ws.error);
